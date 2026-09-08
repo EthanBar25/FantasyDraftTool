@@ -1,9 +1,10 @@
+from dataclasses import replace
 from pathlib import Path
 
 from fantasy_draft_tool.draft import DraftState
 from fantasy_draft_tool.league import LeagueSettings
 from fantasy_draft_tool.rankings import rank_from_csv
-from fantasy_draft_tool.recommend import available_players, recommend
+from fantasy_draft_tool.recommend import _roster_need, available_players, recommend
 
 SAMPLE = Path(__file__).resolve().parents[1] / "data" / "sample_players.csv"
 
@@ -52,3 +53,31 @@ def test_roster_need_reason_surfaces_for_empty_roster():
     recs = recommend(state, pool, limit=10)
     joined = " ".join(r for rec in recs for r in rec.reasons)
     assert "need" in joined or "no starting" in joined
+
+
+def test_streamer_positions_wait_until_late():
+    league = LeagueSettings(num_teams=12)
+    assert _roster_need("K", {}, league, late_draft=False)[0] < 0.5
+    assert _roster_need("K", {}, league, late_draft=True)[0] > 1.0
+    # Once you already have one, it drops to near-zero weight.
+    assert _roster_need("DEF", {"DEF": 1}, league, late_draft=True)[0] < 0.2
+
+
+def test_kicker_not_recommended_early_even_with_high_vor():
+    state, pool = build()
+    pool = list(pool) + [replace(pool[0], player="Boom Kicker", position="K", vor=60.0, adp=130.0)]
+    recs = recommend(state, pool, limit=6)
+    assert "Boom Kicker" not in [r.player for r in recs]
+
+
+def test_adp_value_reason_and_bump():
+    state, pool = build(my_slot=1, teams=4)  # pick 1 is on the clock
+    faller = pool[5]
+    pool = list(pool)
+    pool[5] = replace(faller, adp=40.0)  # market says ~pick 40, available at 1
+
+    recs = {r.player: r for r in recommend(state, pool, limit=50)}
+    rec = recs[faller.player]
+    assert rec.adp == 40.0
+    assert any("value" in reason.lower() for reason in rec.reasons)
+    assert rec.adjusted > rec.vor  # value multiplier applied

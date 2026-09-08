@@ -125,7 +125,7 @@ function renderRecs() {
       <li data-player="${escapeAttr(r.player)}" data-position="${r.position}" data-team="${escapeAttr(r.team || "")}">
         <div>
           <div class="rec-name">${escapeHtml(r.player)}</div>
-          <div class="rec-sub">${chip(r.position)} ${escapeHtml(r.team || "")} · ${r.projected_points} proj</div>
+          <div class="rec-sub">${chip(r.position)} ${escapeHtml(r.team || "")} · ${r.projected_points} proj${r.adp != null ? ` · ADP ${r.adp}` : ""}</div>
           <div class="rec-reasons">${r.reasons.map((x) => `<span class="tag">${escapeHtml(x)}</span>`).join("")}</div>
         </div>
         <div class="rec-val">VOR<b>+${r.vor}</b></div>
@@ -139,7 +139,7 @@ function renderBestAvailable() {
   list.innerHTML = STATE.best_available
     .map(
       (p) => `<li>${chip(p.position)}<span class="grow">${escapeHtml(p.player)}</span>
-        <span class="v">${escapeHtml(p.team || "")} · +${p.vor}</span></li>`
+        <span class="v">${p.adp != null ? `ADP ${p.adp} · ` : ""}+${p.vor}</span></li>`
     )
     .join("");
 }
@@ -202,7 +202,7 @@ async function runSearch(q) {
             (r) => `<li class="${r.drafted ? "is-drafted" : ""}"
               data-player="${escapeAttr(r.player)}" data-position="${r.position}" data-team="${escapeAttr(r.team || "")}">
               ${chip(r.position)}<span class="grow">${escapeHtml(r.player)}</span>
-              <span class="v">${escapeHtml(r.team || "")} · +${r.vor}${r.drafted ? " · drafted" : ""}</span></li>`
+              <span class="v">${r.adp != null ? `ADP ${r.adp} · ` : ""}+${r.vor}${r.drafted ? " · drafted" : ""}</span></li>`
           )
           .join("")
       : `<li class="muted">No matches</li>`);

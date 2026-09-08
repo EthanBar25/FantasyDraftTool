@@ -37,6 +37,7 @@ class RankedPlayer:
     vor: float
     overall_rank: int
     position_rank: int
+    adp: float | None = None
 
 
 def load_projections(path: str | Path) -> pd.DataFrame:
@@ -50,8 +51,13 @@ def load_projections(path: str | Path) -> pd.DataFrame:
         )
     df["position"] = df["position"].map(normalize_position)
     df["projected_points"] = pd.to_numeric(df["projected_points"], errors="coerce")
+    if "adp" in df.columns:
+        df["adp"] = pd.to_numeric(df["adp"], errors="coerce")
     df = df.dropna(subset=["projected_points"])
-    return df
+    # A player projected for nothing isn't a draftable "replacement"; keeping
+    # them would drag every replacement level toward zero.
+    df = df[df["projected_points"] > 0]
+    return df.reset_index(drop=True)
 
 
 def compute_vor(
@@ -70,6 +76,7 @@ def compute_vor(
         replacement_points = float(ordered.loc[max(idx, 0), "projected_points"])
 
         for pos_rank, row in enumerate(ordered.itertuples(index=False), start=1):
+            adp = getattr(row, "adp", None)
             rows.append(
                 RankedPlayer(
                     player=row.player,
@@ -79,6 +86,7 @@ def compute_vor(
                     vor=float(row.projected_points) - replacement_points,
                     overall_rank=0,  # filled in below
                     position_rank=pos_rank,
+                    adp=float(adp) if adp is not None and pd.notna(adp) else None,
                 )
             )
 

@@ -32,3 +32,20 @@ def test_position_ranks_are_dense_per_position():
     players = rank_from_csv(SAMPLE)
     rbs = sorted((p for p in players if p.position == "RB"), key=lambda p: p.position_rank)
     assert [p.position_rank for p in rbs] == list(range(1, len(rbs) + 1))
+
+
+def test_adp_column_flows_into_ranked_player(tmp_path):
+    csv = tmp_path / "p.csv"
+    csv.write_text(
+        "player,position,team,projected_points,adp\n"
+        "Alpha Back,RB,SF,300,1.2\n"
+        "Bravo Wide,WR,KC,250,\n"
+    )
+    players = {p.player: p for p in rank_from_csv(csv)}
+    assert players["Alpha Back"].adp == 1.2
+    assert players["Bravo Wide"].adp is None  # blank cell -> None, not NaN
+
+
+def test_missing_adp_column_is_fine():
+    players = rank_from_csv(SAMPLE)
+    assert all(p.adp is None for p in players)

@@ -13,17 +13,20 @@ Working today:
   or restart mid-draft doesn't lose the board.
 - **Sleeper import** — paste a league ID (and/or draft ID) to pull in scoring
   rules, roster slots, team count, and any picks already made.
-- `rank` command: rank a projections CSV by **value over replacement (VOR)** —
-  how much a player scores above a freely-available replacement at the position.
+- **Real player data** (`fantasy-draft fetch-data`) — pulls current ADP (Fantasy
+  Football Calculator) and the last three seasons of stats (nflverse) into
+  `data/player_pool.csv`, which the board and `rank` then use automatically. See
+  [`data/SOURCES.md`](data/SOURCES.md).
+- `rank` command: rank players by **value over replacement (VOR)** — how much a
+  player scores above a freely-available replacement at the position.
 
 Recommendations combine VOR with your roster needs, positional runs since your
-last pick, and tier cliffs.
+last pick, tier cliffs, and value vs. ADP.
 
 Planned:
 
-- ADP integration and "reach vs. value" flags
 - Score raw stat projections through the imported Sleeper scoring settings
-- Projection scrapers / importers for common sources
+- Real projections (not the recency-weighted proxy) from a projections source
 
 ## Setup
 
@@ -50,14 +53,20 @@ fantasy-draft serve            # then open http://127.0.0.1:8000
 - Click any board cell to search and set that pick; click a recommendation to
   assign it to the pick on the clock.
 
+### Player data
+
+```bash
+fantasy-draft fetch-data                       # ADP 2026 + stats 2023-2025, half-PPR
+fantasy-draft fetch-data --scoring ppr --teams 10
+```
+
+Writes `data/player_pool.csv`. Needs network; nothing else does.
+
 ### Rankings CLI
 
 ```bash
-# Top 25 by VOR from the bundled sample data
+fantasy-draft rank -n 40           # uses data/player_pool.csv if present, else the sample
 fantasy-draft rank data/sample_players.csv
-
-# Or without installing the script
-python -m fantasy_draft_tool rank data/sample_players.csv -n 40
 ```
 
 ### Projections CSV format
@@ -80,7 +89,8 @@ src/fantasy_draft_tool/
   league.py      # LeagueSettings, modeled on Sleeper (scoring, roster slots)
   draft.py       # snake pick order, board state, per-team rosters
   rankings.py    # load projections, compute VOR
-  recommend.py   # VOR + roster need + positional runs -> pick recommendations
+  recommend.py   # VOR + roster need + positional runs + ADP value -> recommendations
+  datasets.py    # fetch + merge ADP and 3-year stats into player_pool.csv
   sleeper.py     # read-only Sleeper API client + league/pick import
   session.py     # in-memory draft session, persisted to data/draft_session.json
   cli.py         # `fantasy-draft` command (rank, serve)
