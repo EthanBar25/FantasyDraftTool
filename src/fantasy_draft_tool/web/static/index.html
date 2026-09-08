@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FantasyDraftTool</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <h1 id="leagueName">My League</h1>
+    </div>
+    <div class="clock" id="clock">Pick &mdash; &middot; nobody on the clock</div>
+    <div class="actions">
+      <button id="btnImport" class="btn">Import from Sleeper</button>
+      <button id="btnSettings" class="btn">League settings</button>
+      <button id="btnReset" class="btn btn-ghost">Reset</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="board-wrap">
+      <div id="board" class="board"></div>
+    </section>
+
+    <aside class="side">
+      <div class="card clock-card" id="clockCard">
+        <div class="clock-card-label">On the clock</div>
+        <div class="clock-card-team" id="clockTeam">&mdash;</div>
+        <div class="clock-card-sub" id="clockSub"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Recommended</h2>
+          <span class="muted" id="nextPicksHint"></span>
+        </div>
+        <ol class="rec-list" id="recList"></ol>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Best available</h2>
+          <span class="muted">by VOR</span>
+        </div>
+        <ul class="ba-list" id="baList"></ul>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>Your roster</h2></div>
+        <ul class="roster-list" id="rosterList"></ul>
+      </div>
+    </aside>
+  </main>
+
+  <!-- Pick entry popover -->
+  <div class="popover" id="pickPop" hidden>
+    <div class="popover-head">
+      <span id="pickPopTitle">Pick</span>
+      <button class="x" data-close-pop>&times;</button>
+    </div>
+    <input type="text" id="pickSearch" placeholder="Search player or position&hellip;" autocomplete="off" />
+    <ul class="search-results" id="searchResults"></ul>
+  </div>
+
+  <!-- Settings modal -->
+  <div class="modal" id="settingsModal" hidden>
+    <div class="modal-box">
+      <div class="modal-head"><h2>League settings</h2><button class="x" data-close-modal>&times;</button></div>
+      <label>League name <input type="text" id="fName" /></label>
+      <div class="row">
+        <label>Teams <input type="number" id="fTeams" min="2" max="20" /></label>
+        <label>Your draft slot <input type="number" id="fMySlot" min="1" max="20" /></label>
+      </div>
+      <label>Roster slots (comma-separated, Sleeper codes: QB RB WR TE FLEX SUPER_FLEX K DEF BN)
+        <textarea id="fRoster" rows="2"></textarea>
+      </label>
+      <label>Scoring settings (JSON, Sleeper stat keys)
+        <textarea id="fScoring" rows="6"></textarea>
+      </label>
+      <div class="modal-actions">
+        <button class="btn" data-close-modal>Cancel</button>
+        <button class="btn btn-primary" id="saveSettings">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import modal -->
+  <div class="modal" id="importModal" hidden>
+    <div class="modal-box">
+      <div class="modal-head"><h2>Import from Sleeper</h2><button class="x" data-close-modal>&times;</button></div>
+      <p class="muted">Paste your Sleeper league ID (from the league URL) and/or a draft ID.
+        Scoring, roster slots, team count, and any picks already made will be pulled in.</p>
+      <label>League ID <input type="text" id="iLeague" placeholder="e.g. 1048291837291837291" /></label>
+      <label>Draft ID <span class="muted">(optional)</span> <input type="text" id="iDraft" /></label>
+      <label>Your draft slot <input type="number" id="iMySlot" min="1" max="20" placeholder="optional" /></label>
+      <div id="importError" class="error" hidden></div>
+      <div class="modal-actions">
+        <button class="btn" data-close-modal>Cancel</button>
+        <button class="btn btn-primary" id="doImport">Import</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
