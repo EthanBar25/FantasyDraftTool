@@ -1,13 +1,14 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from fantasy_draft_tool.session import DraftSession
+from fantasy_draft_tool.session import SAMPLE_PLAYERS, DraftSession
 from fantasy_draft_tool.web import app as app_module
 
 
 @pytest.fixture()
 def client(tmp_path):
-    fresh = DraftSession(session_file=tmp_path / "session.json")
+    # Pin to the sample pool so tests don't depend on data/player_pool.csv.
+    fresh = DraftSession(projections_path=SAMPLE_PLAYERS, session_file=tmp_path / "session.json")
     app_module.session = fresh
     return TestClient(app_module.app)
 

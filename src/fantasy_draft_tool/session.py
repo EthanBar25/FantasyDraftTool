@@ -14,17 +14,24 @@ from .recommend import Recommendation, available_players, recommend
 from .sleeper import SleeperClient, apply_import
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_PROJECTIONS = REPO_ROOT / "data" / "sample_players.csv"
-DEFAULT_SESSION_FILE = REPO_ROOT / "data" / "draft_session.json"
+DATA_DIR = REPO_ROOT / "data"
+PLAYER_POOL = DATA_DIR / "player_pool.csv"
+SAMPLE_PLAYERS = DATA_DIR / "sample_players.csv"
+DEFAULT_SESSION_FILE = DATA_DIR / "draft_session.json"
+
+
+def default_projections() -> Path:
+    """Prefer the fetched real dataset; fall back to the bundled sample."""
+    return PLAYER_POOL if PLAYER_POOL.exists() else SAMPLE_PLAYERS
 
 
 class DraftSession:
     def __init__(
         self,
-        projections_path: Path | str = DEFAULT_PROJECTIONS,
+        projections_path: Path | str | None = None,
         session_file: Path | str = DEFAULT_SESSION_FILE,
     ) -> None:
-        self.projections_path = Path(projections_path)
+        self.projections_path = Path(projections_path) if projections_path else default_projections()
         self.session_file = Path(session_file)
         self.league = LeagueSettings()
         self.state = DraftState(self.league, my_slot=1)
@@ -65,6 +72,7 @@ class DraftSession:
                     "team": p.team,
                     "projected_points": round(p.projected_points, 1),
                     "vor": round(p.vor, 1),
+                    "adp": round(p.adp, 1) if p.adp is not None else None,
                     "drafted": is_drafted,
                 }
             )
@@ -126,6 +134,7 @@ class DraftSession:
                 "team": p.team,
                 "projected_points": round(p.projected_points, 1),
                 "vor": round(p.vor, 1),
+                "adp": round(p.adp, 1) if p.adp is not None else None,
             }
             for p in avail[:limit]
         ]
@@ -162,7 +171,11 @@ class DraftSession:
         if not self.session_file.exists():
             return False
         data = json.loads(self.session_file.read_text())
-        self.projections_path = Path(data.get("projections_path", self.projections_path))
+        saved = data.get("projections_path")
+        if saved and Path(saved).exists():
+            self.projections_path = Path(saved)
+        else:
+            self.projections_path = default_projections()
         self.league = LeagueSettings.from_dict(data.get("league", {}))
         self.state = DraftState(self.league, my_slot=int(data.get("my_slot", 1)))
         self.slot_labels = {int(k): v for k, v in (data.get("slot_labels") or {}).items()}

@@ -33,7 +33,9 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Project data — keep the folder and its docs/samples, ignore bulk downloads
+# Project data — keep the folder, docs, and the built player pool; ignore the rest
 data/*
 !data/README.md
+!data/SOURCES.md
 !data/sample_players.csv
+!data/player_pool.csv
