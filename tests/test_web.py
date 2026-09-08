@@ -64,7 +64,7 @@ def test_players_search_filters_drafted(client):
 def test_import_sleeper_uses_injected_client(client, monkeypatch):
     from fantasy_draft_tool import sleeper
 
-    def fake_import(self, league_id=None, draft_id=None):
+    def fake_import(self, league_id=None, draft_id=None, me=None):
         return sleeper.SleeperImport(
             league=sleeper.LeagueSettings(name="Imported", num_teams=8),
             draft_id="d1",
@@ -76,3 +76,40 @@ def test_import_sleeper_uses_injected_client(client, monkeypatch):
     resp = client.post("/api/import/sleeper", json={"league_id": "999"}).json()
     assert resp["league"]["name"] == "Imported"
     assert resp["draft"]["picks"][0]["player"] == "Some Guy"
+
+
+def test_sync_sleeper_pulls_new_picks_without_rebuild(client, monkeypatch):
+    from fantasy_draft_tool import sleeper
+
+    def fake_import(self, league_id=None, draft_id=None, me=None):
+        return sleeper.SleeperImport(
+            league=sleeper.LeagueSettings(name="Mock", num_teams=10),
+            draft_id="mock1", is_mock=True, status="drafting",
+            picks=[{"pick_no": 1, "player": "Player One", "position": "RB", "team": "SF", "player_id": "1"}],
+            draft_slot_to_team={},
+        )
+
+    picks_calls = []
+
+    def fake_sync_picks(self, draft_id):
+        picks_calls.append(draft_id)
+        return [
+            {"pick_no": 1, "player": "Player One", "position": "RB", "team": "SF", "player_id": "1"},
+            {"pick_no": 2, "player": "Player Two", "position": "WR", "team": "KC", "player_id": "2"},
+        ]
+
+    monkeypatch.setattr(sleeper.SleeperClient, "import_league", fake_import)
+    monkeypatch.setattr(sleeper.SleeperClient, "sync_picks", fake_sync_picks)
+
+    imported = client.post("/api/import/sleeper", json={"draft_id": "mock1"}).json()
+    assert imported["draft"]["sleeper"]["is_mock"] is True
+    assert imported["draft"]["picks"][1]["player"] is None
+
+    synced = client.post("/api/sync/sleeper").json()
+    assert picks_calls == ["mock1"]
+    assert synced["draft"]["picks"][1]["player"] == "Player Two"
+    assert synced["league"]["num_teams"] == 10
+
+
+def test_sync_sleeper_without_link_is_400(client):
+    assert client.post("/api/sync/sleeper").status_code == 400

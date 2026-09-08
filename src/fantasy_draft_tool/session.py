@@ -11,7 +11,7 @@ from .draft import DraftState
 from .league import LeagueSettings, normalize_position
 from .rankings import RankedPlayer, rank_from_csv
 from .recommend import Recommendation, available_players, recommend
-from .sleeper import SleeperClient, apply_import
+from .sleeper import SleeperClient, apply_import, apply_new_picks
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = REPO_ROOT / "data"
@@ -36,6 +36,7 @@ class DraftSession:
         self.league = LeagueSettings()
         self.state = DraftState(self.league, my_slot=1)
         self.slot_labels: dict[int, str] = {}
+        self.sleeper: dict = {}  # {draft_id, league_id, is_mock, status} when linked
         self._pool: list[RankedPlayer] = []
         self._rerank()
 
@@ -111,14 +112,32 @@ class DraftSession:
         self.save()
 
     def import_sleeper(self, league_id: str | None, draft_id: str | None,
-                       my_slot: int | None = None, client: SleeperClient | None = None) -> None:
+                       my_slot: int | None = None, username: str | None = None,
+                       client: SleeperClient | None = None) -> None:
         client = client or SleeperClient()
-        imported = client.import_league(league_id=league_id, draft_id=draft_id)
+        imported = client.import_league(league_id=league_id, draft_id=draft_id, me=username)
         apply_import(self.state, imported, my_slot=my_slot)
         self.league = self.state.league
         self.slot_labels = dict(imported.draft_slot_to_team)
+        self.sleeper = {
+            "draft_id": imported.draft_id,
+            "league_id": imported.league_id,
+            "is_mock": imported.is_mock,
+            "status": imported.status,
+        }
         self._rerank()
         self.save()
+
+    def sync_sleeper(self, client: SleeperClient | None = None) -> int:
+        """Re-pull picks from the linked (mock) draft. Returns how many changed."""
+        draft_id = self.sleeper.get("draft_id")
+        if not draft_id:
+            raise ValueError("no Sleeper draft is linked — import one first")
+        client = client or SleeperClient()
+        changed = apply_new_picks(self.state, client.sync_picks(draft_id))
+        if changed:
+            self.save()
+        return changed
 
     # -- views ----------------------------------------------------
 
@@ -149,6 +168,7 @@ class DraftSession:
                 "my_upcoming_picks": self.state.my_upcoming_picks(),
                 "picks_until_my_turn": self.state.picks_between_now_and_my_next(),
                 "on_the_clock_slot": self.state.get_pick(cur).slot if cur else None,
+                "sleeper": self.sleeper,
             },
             "recommendations": [r.to_dict() for r in self.recommendations()],
             "best_available": self.best_available(),
@@ -161,6 +181,7 @@ class DraftSession:
             "projections_path": str(self.projections_path),
             "my_slot": self.state.my_slot,
             "slot_labels": {str(k): v for k, v in self.slot_labels.items()},
+            "sleeper": self.sleeper,
             "league": self.league.to_dict(),
             "picks": [p.to_dict() for p in self.state.picks if p.is_made],
         }
@@ -179,6 +200,7 @@ class DraftSession:
         self.league = LeagueSettings.from_dict(data.get("league", {}))
         self.state = DraftState(self.league, my_slot=int(data.get("my_slot", 1)))
         self.slot_labels = {int(k): v for k, v in (data.get("slot_labels") or {}).items()}
+        self.sleeper = data.get("sleeper") or {}
         self._rerank()
         for p in data.get("picks", []):
             try:

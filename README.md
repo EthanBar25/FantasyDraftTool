@@ -11,8 +11,10 @@ Working today:
   grid. Enter every pick for every team, get a live recommendation panel for the
   pick on the clock, and track your roster. State is saved to disk so a refresh
   or restart mid-draft doesn't lose the board.
-- **Sleeper import** — paste a league ID (and/or draft ID) to pull in scoring
-  rules, roster slots, team count, and any picks already made.
+- **Sleeper import** — paste a league ID, a draft ID, or a **mock draft ID** to
+  pull in scoring rules, roster slots, team count, and picks already made. For a
+  mock draft the rules are rebuilt from the draft itself. **Sync draft** then
+  re-pulls picks as the (mock) draft runs, so you can dry-run the tool live.
 - **Real player data** (`fantasy-draft fetch-data`) — pulls current ADP (Fantasy
   Football Calculator) and the last three seasons of stats (nflverse) into
   `data/player_pool.csv`, which the board and `rank` then use automatically. See
@@ -48,8 +50,12 @@ fantasy-draft serve            # then open http://127.0.0.1:8000
 
 - **League settings** — set team count, your draft slot, roster slots (Sleeper
   codes: `QB RB WR TE FLEX SUPER_FLEX K DEF BN`), and scoring as JSON.
-- **Import from Sleeper** — paste your league ID (the number in the league URL)
-  and optionally a draft ID.
+- **Import from Sleeper**:
+  - *Real league* — paste the League ID (the number in your league URL).
+  - *Mock draft* — paste just the Draft ID from `sleeper.com/draft/nfl/<id>`,
+    leave League ID blank. Add your Sleeper username to set your slot automatically.
+  - Once linked, **Sync draft** (and a background poll) pull new picks as they
+    happen — draft in the Sleeper mock and watch the recommendations update.
 - Click any board cell to search and set that pick; click a recommendation to
   assign it to the pick on the clock.
 
@@ -91,7 +97,7 @@ src/fantasy_draft_tool/
   rankings.py    # load projections, compute VOR
   recommend.py   # VOR + roster need + positional runs + ADP value -> recommendations
   datasets.py    # fetch + merge ADP and 3-year stats into player_pool.csv
-  sleeper.py     # read-only Sleeper API client + league/pick import
+  sleeper.py     # read-only Sleeper API client: league / draft / mock-draft import + live sync
   session.py     # in-memory draft session, persisted to data/draft_session.json
   cli.py         # `fantasy-draft` command (rank, serve)
   web/           # FastAPI app + vanilla-JS draft board (static/)
