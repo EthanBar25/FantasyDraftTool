@@ -18,6 +18,9 @@
 }
 
 * { box-sizing: border-box; }
+/* The `hidden` attribute must win over component rules like `.modal { display: flex }`
+   — otherwise closing a modal/popover by toggling `el.hidden` does nothing. */
+[hidden] { display: none !important; }
 body {
   margin: 0;
   background: var(--bg);
