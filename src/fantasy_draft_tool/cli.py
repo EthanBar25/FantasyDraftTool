@@ -40,7 +40,21 @@ def build_parser() -> argparse.ArgumentParser:
         "-n", "--limit", type=int, default=25, help="How many players to show (default: 25)."
     )
     rank.set_defaults(func=_cmd_rank)
+
+    serve = sub.add_parser("serve", help="Run the local draft-board web app.")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.set_defaults(func=_cmd_serve)
     return parser
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    uvicorn.run(
+        "fantasy_draft_tool.web.app:app", host=args.host, port=args.port, reload=False
+    )
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

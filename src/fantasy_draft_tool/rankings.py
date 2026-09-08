@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from .league import normalize_position
+
 # Roughly how many players at each position come off the board before the talent
 # drops to "waiver wire" level in a 12-team league. Tune to your league.
 DEFAULT_REPLACEMENT_RANK: dict[str, int] = {
@@ -20,7 +22,7 @@ DEFAULT_REPLACEMENT_RANK: dict[str, int] = {
     "WR": 36,
     "TE": 14,
     "K": 12,
-    "DST": 12,
+    "DEF": 12,
 }
 
 REQUIRED_COLUMNS = {"player", "position", "team", "projected_points"}
@@ -46,7 +48,7 @@ def load_projections(path: str | Path) -> pd.DataFrame:
         raise ValueError(
             f"{path}: missing required column(s): {', '.join(sorted(missing))}"
         )
-    df["position"] = df["position"].str.upper().str.strip()
+    df["position"] = df["position"].map(normalize_position)
     df["projected_points"] = pd.to_numeric(df["projected_points"], errors="coerce")
     df = df.dropna(subset=["projected_points"])
     return df
