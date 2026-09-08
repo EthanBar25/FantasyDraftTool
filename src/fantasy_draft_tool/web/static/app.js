@@ -45,6 +45,13 @@ function render() {
     clockEl.classList.remove("mine");
   }
 
+  const linked = s.draft.sleeper && s.draft.sleeper.draft_id;
+  const syncBtn = document.getElementById("btnSync");
+  syncBtn.hidden = !linked;
+  if (linked) {
+    syncBtn.textContent = s.draft.sleeper.is_mock ? "↻ Sync mock draft" : "↻ Sync draft";
+  }
+
   renderBoard();
   renderClockCard();
   renderRecs();
@@ -269,6 +276,7 @@ async function doImport() {
   const body = {
     league_id: document.getElementById("iLeague").value.trim() || null,
     draft_id: document.getElementById("iDraft").value.trim() || null,
+    username: document.getElementById("iUser").value.trim() || null,
     my_slot: parseInt(document.getElementById("iMySlot").value, 10) || null,
   };
   try {
@@ -278,6 +286,24 @@ async function doImport() {
   } catch (e) {
     errEl.textContent = e.message;
     errEl.hidden = false;
+  }
+}
+
+let syncing = false;
+async function syncSleeper(manual) {
+  if (syncing) return;
+  syncing = true;
+  const btn = document.getElementById("btnSync");
+  const label = btn.textContent;
+  if (manual) btn.textContent = "Syncing…";
+  try {
+    STATE = await api("/api/sync/sleeper", { method: "POST" });
+    render();
+  } catch (e) {
+    if (manual) alert(e.message);
+  } finally {
+    syncing = false;
+    if (manual) document.getElementById("btnSync").textContent = label;
   }
 }
 
@@ -336,6 +362,7 @@ document.getElementById("btnSettings").addEventListener("click", () => { fillSet
 document.getElementById("btnImport").addEventListener("click", () => openModal("importModal"));
 document.getElementById("saveSettings").addEventListener("click", saveSettings);
 document.getElementById("doImport").addEventListener("click", doImport);
+document.getElementById("btnSync").addEventListener("click", () => syncSleeper(true));
 document.getElementById("btnReset").addEventListener("click", async () => {
   if (!confirm("Clear every pick on the board?")) return;
   STATE = await api("/api/reset", { method: "POST" });
@@ -347,9 +374,18 @@ async function loadState() {
   STATE = await api("/api/state");
   render();
 }
+
+function uiBusy() {
+  return !pop.hidden || [...document.querySelectorAll(".modal")].some((m) => !m.hidden);
+}
+
 loadState();
 setInterval(() => {
-  if (pop.hidden && [...document.querySelectorAll(".modal")].every((m) => m.hidden)) {
+  if (uiBusy()) return;
+  const sl = STATE && STATE.draft.sleeper;
+  if (sl && sl.draft_id && sl.status !== "complete") {
+    syncSleeper(false);  // linked to a (mock) draft — pull new picks
+  } else {
     loadState().catch(() => {});
   }
-}, 15000);
+}, 7000);

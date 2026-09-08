@@ -45,6 +45,7 @@ class SleeperBody(BaseModel):
     league_id: str | None = None
     draft_id: str | None = None
     my_slot: int | None = None
+    username: str | None = None
 
 
 # -- routes ---------------------------------------------------------
@@ -110,11 +111,26 @@ def post_reset() -> dict:
 @app.post("/api/import/sleeper")
 def post_import_sleeper(body: SleeperBody) -> dict:
     if not body.league_id and not body.draft_id:
-        raise HTTPException(status_code=400, detail="provide league_id or draft_id")
+        raise HTTPException(status_code=400, detail="provide a league ID or a (mock) draft ID")
     try:
-        session.import_sleeper(body.league_id, body.draft_id, my_slot=body.my_slot)
+        session.import_sleeper(
+            body.league_id, body.draft_id, my_slot=body.my_slot, username=body.username
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Sleeper import failed: {exc}") from exc
+    return session.to_dict()
+
+
+@app.post("/api/sync/sleeper")
+def post_sync_sleeper() -> dict:
+    try:
+        session.sync_sleeper()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Sleeper sync failed: {exc}") from exc
     return session.to_dict()
 
 

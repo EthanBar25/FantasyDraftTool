@@ -14,6 +14,7 @@
     </div>
     <div class="clock" id="clock">Pick &mdash; &middot; nobody on the clock</div>
     <div class="actions">
+      <button id="btnSync" class="btn btn-primary" hidden>&#8635; Sync draft</button>
       <button id="btnImport" class="btn">Import from Sleeper</button>
       <button id="btnSettings" class="btn">League settings</button>
       <button id="btnReset" class="btn btn-ghost">Reset</button>
@@ -91,11 +92,21 @@
   <div class="modal" id="importModal" hidden>
     <div class="modal-box">
       <div class="modal-head"><h2>Import from Sleeper</h2><button class="x" data-close-modal>&times;</button></div>
-      <p class="muted">Paste your Sleeper league ID (from the league URL) and/or a draft ID.
-        Scoring, roster slots, team count, and any picks already made will be pulled in.</p>
-      <label>League ID <input type="text" id="iLeague" placeholder="e.g. 1048291837291837291" /></label>
-      <label>Draft ID <span class="muted">(optional)</span> <input type="text" id="iDraft" /></label>
-      <label>Your draft slot <input type="number" id="iMySlot" min="1" max="20" placeholder="optional" /></label>
+      <p class="muted">
+        <b>Real league:</b> paste the League ID (the number in your league URL).<br />
+        <b>Mock draft:</b> paste just the Draft ID (the number in the mock draft URL,
+        <code>sleeper.com/draft/nfl/<b>&lt;id&gt;</b></code>) and leave League ID blank.
+      </p>
+      <p class="muted">Scoring, roster slots, team count, and any picks already made
+        are pulled in. Then <b>Sync draft</b> re-pulls picks as the draft goes.</p>
+      <label>League ID <span class="muted">(real leagues)</span>
+        <input type="text" id="iLeague" placeholder="e.g. 1048291837291837291" /></label>
+      <label>Draft / mock draft ID
+        <input type="text" id="iDraft" placeholder="e.g. 1122334455667788990" /></label>
+      <label>Sleeper username <span class="muted">(optional — sets your slot automatically)</span>
+        <input type="text" id="iUser" placeholder="your Sleeper handle" /></label>
+      <label>Your draft slot <span class="muted">(optional — if you skip the username)</span>
+        <input type="number" id="iMySlot" min="1" max="20" /></label>
       <div id="importError" class="error" hidden></div>
       <div class="modal-actions">
         <button class="btn" data-close-modal>Cancel</button>
