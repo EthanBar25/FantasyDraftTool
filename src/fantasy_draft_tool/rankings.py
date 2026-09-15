@@ -28,6 +28,10 @@ DEFAULT_REPLACEMENT_RANK: dict[str, int] = {
 REQUIRED_COLUMNS = {"player", "position", "team", "projected_points"}
 
 
+def _clean_str(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
 @dataclass(frozen=True)
 class RankedPlayer:
     player: str
@@ -38,6 +42,9 @@ class RankedPlayer:
     overall_rank: int
     position_rank: int
     adp: float | None = None
+    status: str | None = None
+    injury_status: str | None = None
+    injury_note: str | None = None
 
 
 def load_projections(path: str | Path) -> pd.DataFrame:
@@ -53,6 +60,9 @@ def load_projections(path: str | Path) -> pd.DataFrame:
     df["projected_points"] = pd.to_numeric(df["projected_points"], errors="coerce")
     if "adp" in df.columns:
         df["adp"] = pd.to_numeric(df["adp"], errors="coerce")
+    for col in ("status", "injury_status", "injury_note"):
+        if col in df.columns:
+            df[col] = df[col].fillna("").astype(str)
     df = df.dropna(subset=["projected_points"])
     # A player projected for nothing isn't a draftable "replacement"; keeping
     # them would drag every replacement level toward zero.
@@ -87,6 +97,9 @@ def compute_vor(
                     overall_rank=0,  # filled in below
                     position_rank=pos_rank,
                     adp=float(adp) if adp is not None and pd.notna(adp) else None,
+                    status=_clean_str(getattr(row, "status", None)),
+                    injury_status=_clean_str(getattr(row, "injury_status", None)),
+                    injury_note=_clean_str(getattr(row, "injury_note", None)),
                 )
             )
 

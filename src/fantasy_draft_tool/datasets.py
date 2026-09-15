@@ -1,20 +1,30 @@
 """Build a real player pool from free public data.
 
-Two sources, both free and unauthenticated:
+Three sources, all free and unauthenticated:
 
 * **ADP** — Fantasy Football Calculator's public API
   (``https://fantasyfootballcalculator.com/api/v1/adp/{scoring}``). Aggregate
-  average draft position from thousands of mock/real drafts.
+  average draft position from thousands of mock/real drafts, for the *current*
+  ``adp_year`` — this is the tool's only signal for this year's market view
+  (new team, coaching change, depth-chart battle, injury recovery, rookie hype)
+  since the stats below are always backward-looking.
 * **Historical stats** — nflverse-data seasonal player stats
   (``stats_player_reg_{year}.csv`` release asset). Regular-season totals per
   player per season, including ``fantasy_points`` (standard) and
   ``fantasy_points_ppr``.
+* **Player status** — Sleeper's public player catalog
+  (``https://api.sleeper.app/v1/players/nfl``, the same source
+  :mod:`fantasy_draft_tool.sleeper` already reads picks from). Current
+  injury/suspension designations — real-world news neither of the above can see.
 
-``build_dataset`` merges the last N seasons of stats with current ADP into one
-row per player and derives a transparent ``projected_points`` proxy: a
-recency-weighted per-game average projected over a 17-game season. It is a proxy,
+``build_dataset`` merges the last N seasons of stats with current ADP and
+status into one row per player. ``projected_points`` is a transparent proxy,
 not a projection service — swap in real projections later by writing the same
-columns.
+columns. For a player with usable history *and* a current ADP, it blends a
+recency-weighted per-game average (projected over 17 games) with an
+"ADP-implied" value — see ``ADP_BLEND_WEIGHT`` — so this year's draft market
+carries real weight, not just last year's box scores. Players with no history
+(rookies, K/DEF) are still priced purely off ADP rank.
 """
 
 from __future__ import annotations
@@ -32,6 +42,7 @@ NFLVERSE_STATS = (
     "https://github.com/nflverse/nflverse-data/releases/download/"
     "stats_player/stats_player_reg_{year}.csv"
 )
+SLEEPER_PLAYERS_API = "https://api.sleeper.app/v1/players/nfl"
 USER_AGENT = "FantasyDraftTool/0.1 (+https://github.com/EthanBar25/FantasyDraftTool)"
 
 SCORING_ALIASES = {
@@ -51,6 +62,14 @@ SEASON_WEIGHTS = [3.0, 2.0, 1.0]
 # Positions with no usable history in the offensive stat feed — always priced
 # off ADP rank, never off past fantasy points.
 _ADP_ONLY_POSITIONS = {"K", "DEF"}
+
+# For a player with both a stats-based proxy and a current-year ADP, how much
+# of the final projection comes from this year's market vs. their own
+# recency-weighted history. History captures a proven track record but can't
+# see this year's news (an injury recovery, a new team, a camp battle won or
+# lost) the way thousands of live ADP drafts already have. 0.5 gives the
+# market a real, visible say without discarding a player's own production.
+ADP_BLEND_WEIGHT = 0.5
 
 # Fallback projected points = ``base - slope * positional_ADP_rank``. K/DEF sit in
 # a deliberately narrow, low band so their value-over-replacement stays near zero
@@ -133,6 +152,56 @@ def fetch_adp(
     return df
 
 
+# -- player status (injuries / suspensions) -------------------------------
+
+def fetch_player_status(*, get_json: JsonGetter | None = None) -> pd.DataFrame:
+    """Return one row per NFL player with their current availability status.
+
+    Pulled from Sleeper's public player catalog — free, unauthenticated, and
+    refreshed daily during the season. ``injury_status`` is Sleeper's own
+    designation (``Questionable``/``Doubtful``/``Out``/``IR``/``PUP``/
+    ``Suspended``/...); ``status`` is the roster status (``Active``,
+    ``Inactive``, ``Injured Reserve``, ``Suspended``, ...). This is the only
+    real-world-news signal in the dataset — everything else here is either
+    past performance or the draft market.
+    """
+    get_json = get_json or _http_get_json
+    payload = get_json(SLEEPER_PLAYERS_API)
+    rows = []
+    for p in (payload or {}).values():
+        if not isinstance(p, dict):
+            continue
+        name = p.get("full_name") or " ".join(
+            t for t in (p.get("first_name"), p.get("last_name")) if t
+        )
+        fantasy_positions = p.get("fantasy_positions") or []
+        position = _norm_pos(p.get("position") or (fantasy_positions[0] if fantasy_positions else ""))
+        if not name or position == "NA":
+            continue
+        rows.append(
+            {
+                "player": name,
+                "position": position,
+                "status": p.get("status") or "",
+                "injury_status": p.get("injury_status") or "",
+                "injury_note": p.get("injury_notes") or p.get("injury_body_part") or "",
+            }
+        )
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["key"] = df["player"].map(_norm_name) + "|" + df["position"]
+        # Sleeper's catalog has retired/practice-squad duplicates under the
+        # same name+position; prefer whichever row actually has signal.
+        has_signal = (df["injury_status"] != "") | (df["status"] == "Active")
+        df = (
+            df.assign(_has_signal=has_signal)
+            .sort_values("_has_signal", ascending=False)
+            .drop_duplicates("key")
+            .drop(columns="_has_signal")
+        )
+    return df
+
+
 # -- seasonal stats -----------------------------------------------------
 
 _STAT_COLUMNS = {
@@ -201,8 +270,11 @@ def build_dataset(
     *,
     get_json: JsonGetter | None = None,
     read_csv: CsvReader | None = None,
+    get_status_json: JsonGetter | None = None,
+    include_status: bool = True,
 ) -> pd.DataFrame:
-    """Merge N seasons of stats with current ADP into one row per player."""
+    """Merge N seasons of stats with current ADP and player status into one
+    row per player."""
     seasons = sorted(stat_years, reverse=True)  # most recent first
     points_col = _points_column(scoring)
 
@@ -211,19 +283,22 @@ def build_dataset(
         ignore_index=True,
     )
     adp = fetch_adp(adp_year, scoring=scoring, teams=teams, get_json=get_json)
+    status = fetch_player_status(get_json=get_status_json) if include_status else pd.DataFrame()
 
     keys = set(stats["key"]) | (set(adp["key"]) if not adp.empty else set())
     stats_by_key = {k: g for k, g in stats.groupby("key")}
     adp_by_key = {r["key"]: r for _, r in adp.iterrows()} if not adp.empty else {}
+    status_by_key = {r["key"]: r for _, r in status.iterrows()} if not status.empty else {}
 
-    # Positional ADP rank, for the no-stats fallback.
+    # Positional ADP rank, for the no-stats fallback and the blend below.
     adp_pos_rank: dict[str, int] = {}
     if not adp.empty:
         for pos, grp in adp.sort_values("adp").groupby("position"):
             for i, key in enumerate(grp["key"], start=1):
                 adp_pos_rank[key] = i
 
-    rows = []
+    # -- pass 1: per-player history, independent of ADP -------------------
+    prelim = []
     for key in sorted(keys):
         g = stats_by_key.get(key)
         a = adp_by_key.get(key)
@@ -245,32 +320,74 @@ def build_dataset(
             team = a["adp_team"]
 
         avg_ppg = _weighted_ppg(ppg_by_season, seasons)
-        if position in _ADP_ONLY_POSITIONS or avg_ppg <= 0:
+        stats_proj = round(avg_ppg * 17, 1) if avg_ppg > 0 else None
+
+        prelim.append(
+            {
+                "key": key, "name": name, "position": position, "team": team, "a": a,
+                "avg_ppg": avg_ppg, "stats_proj": stats_proj,
+                "ppg_by_season": ppg_by_season, "pts_by_season": pts_by_season,
+                "games_by_season": games_by_season,
+            }
+        )
+
+    # This year's stats-only projection curve per position, best to worst —
+    # what the "ADP-implied" value for a given positional ADP rank blends in.
+    stats_curve_by_pos: dict[str, list[float]] = {}
+    for row in prelim:
+        if row["position"] not in _ADP_ONLY_POSITIONS and row["stats_proj"] is not None:
+            stats_curve_by_pos.setdefault(row["position"], []).append(row["stats_proj"])
+    for curve in stats_curve_by_pos.values():
+        curve.sort(reverse=True)
+
+    # -- pass 2: blend in this year's ADP, assemble rows -------------------
+    rows = []
+    for row in prelim:
+        key, position, a = row["key"], row["position"], row["a"]
+        stats_proj = row["stats_proj"]
+
+        if position in _ADP_ONLY_POSITIONS or stats_proj is None:
             # Kickers and team defenses aren't in the offensive stat feed, and
             # rookies have no history: fall back to a low ADP-rank curve so their
             # value-over-replacement stays small.
             base, slope = _ADP_FALLBACK.get(position, (150.0, 5.0))
             proj = round(max(base - slope * adp_pos_rank.get(key, 60), 0.0), 1) if a is not None else 0.0
+        elif a is not None:
+            # Blend this year's market view in: price the player as if he were
+            # the Nth-best at his position on paper, N = his current ADP rank.
+            curve = stats_curve_by_pos.get(position) or [stats_proj]
+            rank = adp_pos_rank.get(key, len(curve))
+            adp_implied = curve[min(max(rank, 1), len(curve)) - 1]
+            proj = round(ADP_BLEND_WEIGHT * adp_implied + (1 - ADP_BLEND_WEIGHT) * stats_proj, 1)
         else:
-            proj = round(avg_ppg * 17, 1)
+            # No current-year ADP at all (not in this year's draft pool) —
+            # nothing to blend against, so go with pure history.
+            proj = stats_proj
 
+        st = status_by_key.get(key)
+        ppg_by_season = row["ppg_by_season"]
+        pts_by_season = row["pts_by_season"]
+        games_by_season = row["games_by_season"]
         recent, oldest = seasons[0], seasons[-1]
-        row = {
-            "player": name,
+        out = {
+            "player": row["name"],
             "position": position,
-            "team": team,
+            "team": row["team"],
             "projected_points": proj,
-            "avg_ppg_3yr": round(avg_ppg, 2),
+            "avg_ppg_3yr": round(row["avg_ppg"], 2),
             "adp": round(float(a["adp"]), 1) if a is not None else "",
             "adp_stdev": round(float(a["adp_stdev"]), 1) if a is not None else "",
             "times_drafted": int(a["times_drafted"]) if a is not None else "",
             "bye": (a["bye"] if a is not None and pd.notna(a["bye"]) else ""),
             "ppg_trend": round(ppg_by_season.get(recent, 0.0) - ppg_by_season.get(oldest, 0.0), 2),
+            "status": st["status"] if st is not None else "",
+            "injury_status": st["injury_status"] if st is not None else "",
+            "injury_note": st["injury_note"] if st is not None else "",
         }
         for s in seasons:
-            row[f"points_{s}"] = round(pts_by_season.get(s, 0.0), 1)
-            row[f"games_{s}"] = games_by_season.get(s, 0)
-        rows.append(row)
+            out[f"points_{s}"] = round(pts_by_season.get(s, 0.0), 1)
+            out[f"games_{s}"] = games_by_season.get(s, 0)
+        rows.append(out)
 
     df = pd.DataFrame(rows)
     # Drop noise: players with neither a projection nor an ADP (practice-squad

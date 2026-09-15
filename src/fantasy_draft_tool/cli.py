@@ -29,18 +29,21 @@ def _cmd_rank(args: argparse.Namespace) -> int:
 def _cmd_fetch_data(args: argparse.Namespace) -> int:
     from .datasets import build_dataset
 
-    print(f"Fetching ADP ({args.scoring}, {args.teams}-team, {args.adp_year}) and "
-          f"stats for {', '.join(map(str, args.years))} ...")
+    print(f"Fetching ADP ({args.scoring}, {args.teams}-team, {args.adp_year}), "
+          f"stats for {', '.join(map(str, args.years))}, and "
+          f"{'injury/status news' if not args.no_status else '(skipping injury/status news)'} ...")
     df = build_dataset(
         stat_years=args.years,
         adp_year=args.adp_year,
         scoring=args.scoring,
         teams=args.teams,
+        include_status=not args.no_status,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.output, index=False)
     with_adp = int((df["adp"] != "").sum()) if "adp" in df.columns else 0
-    print(f"Wrote {len(df)} players ({with_adp} with ADP) to {args.output}")
+    flagged = int((df["injury_status"] != "").sum()) if "injury_status" in df.columns else 0
+    print(f"Wrote {len(df)} players ({with_adp} with ADP, {flagged} with injury/status news) to {args.output}")
     return 0
 
 
@@ -79,6 +82,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scoring format for points and ADP (default: half-ppr).",
     )
     fetch.add_argument("--teams", type=int, default=12, help="League size for ADP (default: 12).")
+    fetch.add_argument(
+        "--no-status", action="store_true",
+        help="Skip pulling injury/suspension status from Sleeper.",
+    )
     fetch.add_argument("-o", "--output", type=Path, default=PLAYER_POOL, help="Output CSV path.")
     fetch.set_defaults(func=_cmd_fetch_data)
 
