@@ -20,6 +20,22 @@ session.load()
 app = FastAPI(title="FantasyDraftTool")
 
 
+@app.middleware("http")
+async def revalidate_static_assets(request, call_next):
+    """Make the browser re-check the board's HTML/JS/CSS on every load.
+
+    Without a Cache-Control header browsers heuristically cache app.js and
+    styles.css, so after an update the page keeps running the old script
+    (e.g. new buttons don't appear) until a hard refresh. ``no-cache`` still
+    lets the browser keep a copy; it just revalidates via ETag (a cheap 304
+    when nothing changed).
+    """
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # -- request bodies ---------------------------------------------------
 
 class LeagueBody(BaseModel):

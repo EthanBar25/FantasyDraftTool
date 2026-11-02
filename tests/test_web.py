@@ -174,3 +174,11 @@ def test_clear_rejections_restores_list(client):
     cleared = client.delete("/api/recommendations/rejections").json()
     assert cleared["rejected"] == []
     assert _rec_names(cleared) == names
+
+
+def test_static_assets_are_revalidated(client):
+    # Browsers must re-check app.js/styles.css so UI updates show up without
+    # a hard refresh.
+    for path in ("/", "/app.js", "/styles.css"):
+        assert client.get(path).headers["cache-control"] == "no-cache"
+    assert "cache-control" not in client.get("/api/state").headers
