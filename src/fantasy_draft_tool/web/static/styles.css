@@ -15,6 +15,7 @@
   --pos-K: #b98cff;
   --pos-DEF: #9aa4b2;
   --pos-NA: #6b7688;
+  --danger: #f2557d;
 }
 
 * { box-sizing: border-box; }
@@ -132,6 +133,7 @@ button { font: inherit; cursor: pointer; }
 .rec-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
 .rec-reasons { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
 .tag { background: var(--bg-3); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 10px; color: var(--muted); }
+.tag-warn { background: rgba(242, 85, 125, 0.15); border-color: var(--danger); color: var(--danger); font-weight: 600; }
 .rec-val { text-align: right; font-variant-numeric: tabular-nums; }
 .rec-val b { display: block; color: var(--accent-2); }
 

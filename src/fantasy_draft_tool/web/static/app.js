@@ -133,7 +133,9 @@ function renderRecs() {
         <div>
           <div class="rec-name">${escapeHtml(r.player)}</div>
           <div class="rec-sub">${chip(r.position)} ${escapeHtml(r.team || "")} · ${r.projected_points} proj${r.adp != null ? ` · ADP ${r.adp}` : ""}</div>
-          <div class="rec-reasons">${r.reasons.map((x) => `<span class="tag">${escapeHtml(x)}</span>`).join("")}</div>
+          <div class="rec-reasons">${r.reasons
+            .map((x, i) => `<span class="tag${i === 0 && r.injury_status ? " tag-warn" : ""}">${escapeHtml(x)}</span>`)
+            .join("")}</div>
         </div>
         <div class="rec-val">VOR<b>+${r.vor}</b></div>
       </li>`
@@ -145,7 +147,9 @@ function renderBestAvailable() {
   const list = document.getElementById("baList");
   list.innerHTML = STATE.best_available
     .map(
-      (p) => `<li>${chip(p.position)}<span class="grow">${escapeHtml(p.player)}</span>
+      (p) => `<li>${chip(p.position)}<span class="grow">${escapeHtml(p.player)}${
+        p.injury_status ? ` <span class="tag tag-warn">${escapeHtml(p.injury_status)}</span>` : ""
+      }</span>
         <span class="v">${p.adp != null ? `ADP ${p.adp} · ` : ""}+${p.vor}</span></li>`
     )
     .join("");
@@ -208,7 +212,9 @@ async function runSearch(q) {
           .map(
             (r) => `<li class="${r.drafted ? "is-drafted" : ""}"
               data-player="${escapeAttr(r.player)}" data-position="${r.position}" data-team="${escapeAttr(r.team || "")}">
-              ${chip(r.position)}<span class="grow">${escapeHtml(r.player)}</span>
+              ${chip(r.position)}<span class="grow">${escapeHtml(r.player)}${
+                r.injury_status ? ` <span class="tag tag-warn">${escapeHtml(r.injury_status)}</span>` : ""
+              }</span>
               <span class="v">${r.adp != null ? `ADP ${r.adp} · ` : ""}+${r.vor}${r.drafted ? " · drafted" : ""}</span></li>`
           )
           .join("")

@@ -2,13 +2,14 @@
 
 The score for an available player at *your* pick is:
 
-    adjusted = vor * roster_need * positional_run * adp_value
+    adjusted = vor * roster_need * positional_run * adp_value * availability
 
 where ``vor`` is value over replacement for your league, ``roster_need`` pushes
 positions you still have to fill up the board (and parks kickers/defenses until
 the final rounds), ``positional_run`` reacts to other teams hammering a position
-since your last pick, and ``adp_value`` rewards players the market drafts earlier
-than your current pick.
+since your last pick, ``adp_value`` rewards players the market drafts earlier
+than your current pick, and ``availability`` deprioritizes (never hides) players
+with current injury or suspension news.
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ class Recommendation:
     vor: float
     adjusted: float
     adp: float | None = None
+    injury_status: str | None = None
     reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -45,6 +47,7 @@ class Recommendation:
             "vor": round(self.vor, 1),
             "adjusted": round(self.adjusted, 1),
             "adp": round(self.adp, 1) if self.adp is not None else None,
+            "injury_status": self.injury_status,
             "reasons": self.reasons,
         }
 
@@ -123,6 +126,35 @@ def _adp_value(adp: float | None, current_pick_no: int | None) -> tuple[float, s
     return 1.0, None
 
 
+# Sleeper injury/roster designations that should cool a recommendation, worst
+# first. This is the only real-world-news signal in the tool — an injury or a
+# suspension neither past stats nor the draft market can react to instantly.
+# Deprioritize, don't hide: you may still want to handcuff or stash a player.
+_INJURY_STATUS_MULT: dict[str, tuple[float, str]] = {
+    "Suspended": (0.35, "suspended — check suspension status before drafting"),
+    "IR": (0.5, "on IR"),
+    "PUP": (0.5, "on the PUP list"),
+    "NFI": (0.5, "on the NFI list"),
+    "Out": (0.55, "out — has current injury news"),
+    "Doubtful": (0.7, "doubtful — recent injury news"),
+    "Questionable": (0.92, "questionable — minor injury news"),
+}
+_ROSTER_STATUS_MULT: dict[str, tuple[float, str]] = {
+    "Inactive": (0.4, "listed inactive"),
+    "Injured Reserve": (0.5, "on injured reserve"),
+    "Suspended": (0.35, "suspended"),
+}
+
+
+def _availability_value(status: str | None, injury_status: str | None) -> tuple[float, str | None]:
+    """Deprioritize a player with current injury/suspension news."""
+    if injury_status and injury_status in _INJURY_STATUS_MULT:
+        return _INJURY_STATUS_MULT[injury_status]
+    if status and status in _ROSTER_STATUS_MULT:
+        return _ROSTER_STATUS_MULT[status]
+    return 1.0, None
+
+
 def _tier_cliff(
     position: str, value: float, same_pos_values: list[float]
 ) -> str | None:
@@ -172,9 +204,12 @@ def recommend(
             adp_mult, adp_reason = 1.0, None
         else:
             adp_mult, adp_reason = _adp_value(p.adp, current)
-        adjusted = p.vor * need_mult * run_mult * adp_mult
+        avail_mult, avail_reason = _availability_value(p.status, p.injury_status)
+        adjusted = p.vor * need_mult * run_mult * adp_mult * avail_mult
 
         reasons: list[str] = []
+        if avail_reason:
+            reasons.append(avail_reason)
         if need_reason:
             reasons.append(need_reason)
         if run_reason:
@@ -197,6 +232,7 @@ def recommend(
                 vor=p.vor,
                 adjusted=adjusted,
                 adp=p.adp,
+                injury_status=p.injury_status,
                 reasons=reasons,
             )
         )

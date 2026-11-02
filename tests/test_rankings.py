@@ -49,3 +49,21 @@ def test_adp_column_flows_into_ranked_player(tmp_path):
 def test_missing_adp_column_is_fine():
     players = rank_from_csv(SAMPLE)
     assert all(p.adp is None for p in players)
+
+
+def test_injury_status_column_flows_into_ranked_player(tmp_path):
+    csv = tmp_path / "p.csv"
+    csv.write_text(
+        "player,position,team,projected_points,status,injury_status,injury_note\n"
+        "Alpha Back,RB,SF,300,Active,Questionable,knee\n"
+        "Bravo Wide,WR,KC,250,Active,,\n"
+    )
+    players = {p.player: p for p in rank_from_csv(csv)}
+    assert players["Alpha Back"].injury_status == "Questionable"
+    assert players["Alpha Back"].injury_note == "knee"
+    assert players["Bravo Wide"].injury_status is None  # blank cell -> None
+
+
+def test_missing_status_columns_are_fine():
+    players = rank_from_csv(SAMPLE)
+    assert all(p.injury_status is None and p.status is None for p in players)

@@ -74,6 +74,7 @@ class DraftSession:
                     "projected_points": round(p.projected_points, 1),
                     "vor": round(p.vor, 1),
                     "adp": round(p.adp, 1) if p.adp is not None else None,
+                    "injury_status": p.injury_status,
                     "drafted": is_drafted,
                 }
             )
@@ -154,6 +155,7 @@ class DraftSession:
                 "projected_points": round(p.projected_points, 1),
                 "vor": round(p.vor, 1),
                 "adp": round(p.adp, 1) if p.adp is not None else None,
+                "injury_status": p.injury_status,
             }
             for p in avail[:limit]
         ]

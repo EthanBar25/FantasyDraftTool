@@ -1,6 +1,11 @@
 import pandas as pd
 
-from fantasy_draft_tool.datasets import build_dataset, fetch_adp, fetch_seasonal_stats
+from fantasy_draft_tool.datasets import (
+    build_dataset,
+    fetch_adp,
+    fetch_player_status,
+    fetch_seasonal_stats,
+)
 
 ADP_PAYLOAD = {
     "status": "Success",
@@ -13,6 +18,23 @@ ADP_PAYLOAD = {
          "stdev": 8.0, "times_drafted": 30, "bye": 5},
     ],
 }
+
+STATUS_PAYLOAD = {
+    "1": {
+        "full_name": "James Cook", "position": "RB", "fantasy_positions": ["RB"],
+        "status": "Active", "injury_status": "Questionable",
+        "injury_notes": "knee", "injury_body_part": "Knee",
+    },
+    "2": {
+        "full_name": "Ja'Marr Chase", "position": "WR", "fantasy_positions": ["WR"],
+        "status": "Active", "injury_status": "", "injury_notes": "",
+    },
+}
+
+
+def fake_get_status_json(url):
+    assert "sleeper.app" in url
+    return STATUS_PAYLOAD
 
 
 def _stats_frame(year, rows):
@@ -76,7 +98,7 @@ def test_fetch_seasonal_stats_normalizes_and_filters():
 def test_build_dataset_merges_stats_with_adp():
     df = build_dataset(
         stat_years=[2023, 2024, 2025], adp_year=2026, scoring="half-ppr",
-        get_json=fake_get_json, read_csv=fake_read_csv,
+        get_json=fake_get_json, read_csv=fake_read_csv, get_status_json=fake_get_status_json,
     )
     by_name = df.set_index("player")
 
@@ -87,7 +109,11 @@ def test_build_dataset_merges_stats_with_adp():
     ppg = {2025: 230.0 / 17, 2024: 200.0 / 17, 2023: 190.0 / 16}
     expected = (3 * ppg[2025] + 2 * ppg[2024] + 1 * ppg[2023]) / 6
     assert cook["avg_ppg_3yr"] == round(expected, 2)
+    # Only RB with stats+ADP -> the ADP-implied curve is just his own value,
+    # so the 50/50 blend is a no-op here.
     assert cook["projected_points"] == round(expected * 17, 1)
+    assert cook["injury_status"] == "Questionable"
+    assert cook["status"] == "Active"
 
     # A defense has ADP but no stats -> fallback projection, still in the pool.
     dst = by_name.loc["Chicago Defense"]
@@ -98,6 +124,54 @@ def test_build_dataset_merges_stats_with_adp():
 def test_build_dataset_sorted_by_projection():
     df = build_dataset(
         stat_years=[2023, 2024, 2025], adp_year=2026,
-        get_json=fake_get_json, read_csv=fake_read_csv,
+        get_json=fake_get_json, read_csv=fake_read_csv, get_status_json=fake_get_status_json,
     )
     assert list(df["projected_points"]) == sorted(df["projected_points"], reverse=True)
+
+
+def test_build_dataset_blends_projection_toward_this_years_adp():
+    # Two WRs with stats: Chase outscored Cook historically, but this year's
+    # ADP has Cook going ahead of Chase at the position (a camp battle won, a
+    # new role, whatever the market has priced in that the 3yr stats can't).
+    stat_years = [2023, 2024, 2025]
+    adp_payload = {
+        "status": "Success",
+        "players": [
+            {"name": "James Cook", "position": "WR", "team": "BUF", "adp": 5.0},
+            {"name": "Ja'Marr Chase", "position": "WR", "team": "CIN", "adp": 20.0},
+        ],
+    }
+    stats = {
+        y: _stats_frame(y, [
+            {"player_display_name": "James Cook", "position": "WR", "recent_team": "BUF",
+             "games": 16, "fantasy_points": 60.0, "fantasy_points_ppr": 90.0},
+            {"player_display_name": "Ja'Marr Chase", "position": "WR", "recent_team": "CIN",
+             "games": 16, "fantasy_points": 200.0, "fantasy_points_ppr": 280.0},
+        ])
+        for y in stat_years
+    }
+    df = build_dataset(
+        stat_years=stat_years, adp_year=2026,
+        get_json=lambda url: adp_payload,
+        read_csv=lambda url: stats[int(url.split("_")[-1].split(".")[0])].copy(),
+        get_status_json=fake_get_status_json,
+    )
+    by_name = df.set_index("player")
+    cook_stats_only = round((90.0 + 60.0) / 2 / 16 * 17, 1)  # half-ppr, unblended
+    chase_stats_only = round((280.0 + 200.0) / 2 / 16 * 17, 1)
+
+    # Blended toward this year's ADP: Cook (ADP rank 1) pulled up, Chase
+    # (ADP rank 2) pulled down, without either fully losing their own history.
+    assert by_name.loc["James Cook", "projected_points"] > cook_stats_only
+    assert by_name.loc["Ja'Marr Chase", "projected_points"] < chase_stats_only
+    # But the market view doesn't fully override history either.
+    assert by_name.loc["James Cook", "projected_points"] < chase_stats_only
+
+
+def test_fetch_player_status_shapes_rows_and_dedupes():
+    df = fetch_player_status(get_json=fake_get_status_json)
+    assert set(df["player"]) == {"James Cook", "Ja'Marr Chase"}
+    cook = df[df["player"] == "James Cook"].iloc[0]
+    assert cook["injury_status"] == "Questionable"
+    assert cook["status"] == "Active"
+    assert cook["key"] == "james cook|RB"

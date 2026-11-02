@@ -81,3 +81,29 @@ def test_adp_value_reason_and_bump():
     assert rec.adp == 40.0
     assert any("value" in reason.lower() for reason in rec.reasons)
     assert rec.adjusted > rec.vor  # value multiplier applied
+
+
+def test_injured_player_is_deprioritized_not_hidden():
+    state, pool = build(my_slot=1, teams=4)
+    top = pool[0]
+    pool = list(pool)
+    pool[0] = replace(top, injury_status="Out")
+
+    recs = {r.player: r for r in recommend(state, pool, limit=50)}
+    rec = recs[top.player]
+
+    assert rec.injury_status == "Out"
+    assert any("injury" in reason.lower() or "out" in reason.lower() for reason in rec.reasons)
+    assert rec.adjusted < rec.vor  # penalized, not multiplied up
+    assert top.player in recs  # still present — deprioritized, not hidden
+
+
+def test_suspended_player_is_penalized_more_than_questionable():
+    state, pool = build(my_slot=1, teams=4)
+    a, b = pool[0], pool[1]
+    pool = list(pool)
+    pool[0] = replace(a, injury_status="Suspended")
+    pool[1] = replace(b, injury_status="Questionable", vor=a.vor)  # equalize VOR
+
+    recs = {r.player: r for r in recommend(state, pool, limit=50)}
+    assert recs[a.player].adjusted < recs[b.player].adjusted

@@ -16,14 +16,17 @@ Working today:
   mock draft the rules are rebuilt from the draft itself. **Sync draft** then
   re-pulls picks as the (mock) draft runs, so you can dry-run the tool live.
 - **Real player data** (`fantasy-draft fetch-data`) — pulls current ADP (Fantasy
-  Football Calculator) and the last three seasons of stats (nflverse) into
-  `data/player_pool.csv`, which the board and `rank` then use automatically. See
-  [`data/SOURCES.md`](data/SOURCES.md).
+  Football Calculator), the last three seasons of stats (nflverse), and current
+  injury/suspension status (Sleeper) into `data/player_pool.csv`, which the board
+  and `rank` then use automatically. See [`data/SOURCES.md`](data/SOURCES.md).
+  Projections blend this year's ADP with historical stats so a player's number
+  reflects this year's market, not just past box scores.
 - `rank` command: rank players by **value over replacement (VOR)** — how much a
   player scores above a freely-available replacement at the position.
 
 Recommendations combine VOR with your roster needs, positional runs since your
-last pick, tier cliffs, and value vs. ADP.
+last pick, tier cliffs, value vs. ADP, and current injury/suspension news
+(deprioritized, never hidden — you can still handcuff or stash).
 
 Planned:
 
