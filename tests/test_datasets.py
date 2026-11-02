@@ -5,6 +5,7 @@ from fantasy_draft_tool.datasets import (
     fetch_adp,
     fetch_player_status,
     fetch_seasonal_stats,
+    load_adp_snapshot,
 )
 
 ADP_PAYLOAD = {
@@ -175,3 +176,57 @@ def test_fetch_player_status_shapes_rows_and_dedupes():
     assert cook["injury_status"] == "Questionable"
     assert cook["status"] == "Active"
     assert cook["key"] == "james cook|RB"
+
+
+def _write_pool(tmp_path, rows):
+    path = tmp_path / "player_pool.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return path
+
+
+def test_load_adp_snapshot_reads_prior_pool(tmp_path):
+    path = _write_pool(tmp_path, [
+        {"player": "James Cook", "position": "RB", "team": "BUF", "adp": 9.5,
+         "adp_stdev": 3.1, "times_drafted": 120, "bye": 7},
+        {"player": "No Adp Guy", "position": "WR", "team": "NYJ", "adp": None,
+         "adp_stdev": None, "times_drafted": None, "bye": None},
+    ])
+    snap = load_adp_snapshot(path)
+    assert list(snap["player"]) == ["James Cook"]  # rows without ADP dropped
+    row = snap.iloc[0]
+    assert row["adp"] == 9.5 and row["adp_team"] == "BUF" and row["key"] == "james cook|RB"
+
+
+def test_load_adp_snapshot_missing_file_is_empty(tmp_path):
+    assert load_adp_snapshot(tmp_path / "nope.csv").empty
+
+
+def test_build_dataset_falls_back_when_live_adp_is_thin(tmp_path):
+    # Out of draft season FFC returns no players; the prior pool's ADP is reused.
+    snap = load_adp_snapshot(_write_pool(tmp_path, [
+        {"player": "James Cook", "position": "RB", "team": "BUF", "adp": 9.5},
+        {"player": "Ja'Marr Chase", "position": "WR", "team": "CIN", "adp": 3.9},
+    ]))
+    df = build_dataset(
+        stat_years=[2023, 2024, 2025], adp_year=2026,
+        get_json=lambda url: {"status": "Success", "players": []},
+        read_csv=fake_read_csv, get_status_json=fake_get_status_json,
+        adp_fallback=snap,
+    )
+    assert df.attrs["adp_source"] == "fallback"
+    assert df.attrs["live_adp_players"] == 0
+    assert df.set_index("player").loc["Ja'Marr Chase", "adp"] == 3.9
+
+
+def test_build_dataset_prefers_live_adp_when_healthy(tmp_path):
+    snap = load_adp_snapshot(_write_pool(tmp_path, [
+        {"player": "James Cook", "position": "RB", "team": "BUF", "adp": 50.0},
+    ]))
+    df = build_dataset(
+        stat_years=[2023, 2024, 2025], adp_year=2026,
+        get_json=fake_get_json, read_csv=fake_read_csv,
+        get_status_json=fake_get_status_json,
+        adp_fallback=snap, min_adp_players=2,
+    )
+    assert df.attrs["adp_source"] == "live"
+    assert df.set_index("player").loc["James Cook", "adp"] == 9.5

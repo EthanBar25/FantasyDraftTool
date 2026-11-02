@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import io
 from collections.abc import Callable, Iterable
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -70,6 +71,11 @@ _ADP_ONLY_POSITIONS = {"K", "DEF"}
 # lost) the way thousands of live ADP drafts already have. 0.5 gives the
 # market a real, visible say without discarding a player's own production.
 ADP_BLEND_WEIGHT = 0.5
+
+# FFC's ADP endpoint only aggregates drafts from a short, recent window, so out
+# of draft season it returns a handful of players (or none). Below this many
+# players the live feed is treated as too thin to trust.
+MIN_ADP_PLAYERS = 100
 
 # Fallback projected points = ``base - slope * positional_ADP_rank``. K/DEF sit in
 # a deliberately narrow, low band so their value-over-replacement stays near zero
@@ -149,6 +155,43 @@ def fetch_adp(
     df = pd.DataFrame(rows)
     if not df.empty:
         df["key"] = df["player"].map(_norm_name) + "|" + df["position"]
+    return df
+
+
+def load_adp_snapshot(path: str | Path) -> pd.DataFrame:
+    """Read the ADP columns of a previously built ``player_pool.csv`` back into
+    the same shape :func:`fetch_adp` returns.
+
+    Used as a last-known-good fallback: FFC's API only aggregates drafts from a
+    short recent window, so outside draft season it returns few or no players.
+    Returns an empty frame if the file is missing or has no ADP column.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return pd.DataFrame()
+    pool = pd.read_csv(path)
+    if "adp" not in pool.columns:
+        return pd.DataFrame()
+    pool["adp"] = pd.to_numeric(pool["adp"], errors="coerce")
+    pool = pool[pool["adp"].notna()]
+    if pool.empty:
+        return pd.DataFrame()
+
+    def col(name: str, default: object) -> pd.Series:
+        return pool[name] if name in pool.columns else pd.Series(default, index=pool.index)
+
+    df = pd.DataFrame(
+        {
+            "player": pool["player"],
+            "position": pool["position"].map(_norm_pos),
+            "adp_team": col("team", None).where(col("team", None).notna(), None),
+            "adp": pool["adp"].astype(float),
+            "adp_stdev": pd.to_numeric(col("adp_stdev", 0.0), errors="coerce").fillna(0.0),
+            "times_drafted": pd.to_numeric(col("times_drafted", 0), errors="coerce").fillna(0).astype(int),
+            "bye": col("bye", None).where(col("bye", None).notna(), None),
+        }
+    ).reset_index(drop=True)
+    df["key"] = df["player"].map(_norm_name) + "|" + df["position"]
     return df
 
 
@@ -272,9 +315,17 @@ def build_dataset(
     read_csv: CsvReader | None = None,
     get_status_json: JsonGetter | None = None,
     include_status: bool = True,
+    adp_fallback: pd.DataFrame | None = None,
+    min_adp_players: int = MIN_ADP_PLAYERS,
 ) -> pd.DataFrame:
     """Merge N seasons of stats with current ADP and player status into one
-    row per player."""
+    row per player.
+
+    If the live ADP feed returns fewer than ``min_adp_players`` players and
+    ``adp_fallback`` (see :func:`load_adp_snapshot`) has more, the fallback is
+    used instead. The returned frame's ``attrs["adp_source"]`` is ``"live"`` or
+    ``"fallback"`` and ``attrs["live_adp_players"]`` is the live count.
+    """
     seasons = sorted(stat_years, reverse=True)  # most recent first
     points_col = _points_column(scoring)
 
@@ -283,6 +334,14 @@ def build_dataset(
         ignore_index=True,
     )
     adp = fetch_adp(adp_year, scoring=scoring, teams=teams, get_json=get_json)
+    live_adp_players = len(adp)
+    adp_source = "live"
+    if (
+        live_adp_players < min_adp_players
+        and adp_fallback is not None
+        and len(adp_fallback) > live_adp_players
+    ):
+        adp, adp_source = adp_fallback, "fallback"
     status = fetch_player_status(get_json=get_status_json) if include_status else pd.DataFrame()
 
     keys = set(stats["key"]) | (set(adp["key"]) if not adp.empty else set())
@@ -394,4 +453,7 @@ def build_dataset(
     # bodies, backup kickers) — they only distort replacement levels.
     keep = (df["projected_points"] > 0) | (df["adp"].astype(str) != "")
     df = df[keep]
-    return df.sort_values("projected_points", ascending=False).reset_index(drop=True)
+    df = df.sort_values("projected_points", ascending=False).reset_index(drop=True)
+    df.attrs["adp_source"] = adp_source
+    df.attrs["live_adp_players"] = live_adp_players
+    return df
