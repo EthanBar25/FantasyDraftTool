@@ -57,8 +57,20 @@ SCORING_ALIASES = {
 
 SKILL_POSITIONS = {"QB", "RB", "WR", "TE", "K", "DEF"}
 
-# Recency weights for the per-game average: most recent season counts most.
-SEASON_WEIGHTS = [3.0, 2.0, 1.0]
+# Recency weights for the per-game average, newest season first: last season
+# carries most of the signal (role changes, breakouts, decline), the one before
+# smooths single-season noise (TD variance), and the oldest is a light tiebreaker.
+SEASON_WEIGHTS = [0.7, 0.2, 0.1]
+
+# A season with fewer games than this has its weight scaled by games / this,
+# so a 3-game sample can't dominate a player's per-game average. A 0-game
+# season contributes nothing.
+FULL_WEIGHT_GAMES = 8
+
+# A player who played 0 games in the most recent season (but has older
+# history) has his stats-based projection multiplied by this: a year away
+# (major injury, suspension) is a real risk his older per-game rate can't show.
+MISSED_SEASON_FACTOR = 0.8
 
 # Positions with no usable history in the offensive stat feed — always priced
 # off ADP rank, never off past fantasy points.
@@ -207,6 +219,13 @@ def fetch_player_status(*, get_json: JsonGetter | None = None) -> pd.DataFrame:
     ``Inactive``, ``Injured Reserve``, ``Suspended``, ...). This is the only
     real-world-news signal in the dataset — everything else here is either
     past performance or the draft market.
+
+    ``team`` is the player's current NFL team (``""`` if he isn't on a roster:
+    retired, released, unsigned). Sleeper is slow to flip ``status`` for
+    retirements, but an empty ``team`` is reliable, so that's what
+    :func:`build_dataset` uses to keep only rostered players. Note ``status ==
+    "Inactive"`` is a game-day designation for rostered players, not a roster
+    removal.
     """
     get_json = get_json or _http_get_json
     payload = get_json(SLEEPER_PLAYERS_API)
@@ -225,6 +244,8 @@ def fetch_player_status(*, get_json: JsonGetter | None = None) -> pd.DataFrame:
             {
                 "player": name,
                 "position": position,
+                "nfl_team": (p.get("team") or "").upper(),
+                "active": p.get("active") is not False,
                 "status": p.get("status") or "",
                 "injury_status": p.get("injury_status") or "",
                 "injury_note": p.get("injury_notes") or p.get("injury_body_part") or "",
@@ -234,13 +255,14 @@ def fetch_player_status(*, get_json: JsonGetter | None = None) -> pd.DataFrame:
     if not df.empty:
         df["key"] = df["player"].map(_norm_name) + "|" + df["position"]
         # Sleeper's catalog has retired/practice-squad duplicates under the
-        # same name+position; prefer whichever row actually has signal.
+        # same name+position; prefer the rostered one, then whichever has signal.
+        on_roster = (df["nfl_team"] != "") & df["active"]
         has_signal = (df["injury_status"] != "") | (df["status"] == "Active")
         df = (
-            df.assign(_has_signal=has_signal)
-            .sort_values("_has_signal", ascending=False)
+            df.assign(_on_roster=on_roster, _has_signal=has_signal)
+            .sort_values(["_on_roster", "_has_signal"], ascending=False)
             .drop_duplicates("key")
-            .drop(columns="_has_signal")
+            .drop(columns=["_on_roster", "_has_signal"])
         )
     return df
 
@@ -296,10 +318,22 @@ def _points_column(scoring: str) -> str:
     }.get(SCORING_ALIASES.get(scoring.lower(), scoring.lower()), "points_half")
 
 
-def _weighted_ppg(ppg_by_season: dict[int, float], seasons: list[int]) -> float:
+def _weighted_ppg(
+    ppg_by_season: dict[int, float],
+    seasons: list[int],
+    games_by_season: dict[int, int] | None = None,
+) -> float:
+    """Recency-weighted per-game average over ``seasons`` (newest first).
+
+    Seasons with fewer than ``FULL_WEIGHT_GAMES`` games are down-weighted in
+    proportion to games played; weights renormalize over what's left.
+    """
     num = den = 0.0
     for weight, season in zip(SEASON_WEIGHTS, seasons):
         if season in ppg_by_season:
+            if games_by_season is not None:
+                games = games_by_season.get(season, 0)
+                weight *= min(games, FULL_WEIGHT_GAMES) / FULL_WEIGHT_GAMES
             num += weight * ppg_by_season[season]
             den += weight
     return num / den if den else 0.0
@@ -325,6 +359,10 @@ def build_dataset(
     ``adp_fallback`` (see :func:`load_adp_snapshot`) has more, the fallback is
     used instead. The returned frame's ``attrs["adp_source"]`` is ``"live"`` or
     ``"fallback"`` and ``attrs["live_adp_players"]`` is the live count.
+
+    With ``include_status`` (the default), only players on a current NFL
+    roster per Sleeper are kept (team defenses always are); the dropped keys
+    are in ``attrs["dropped_off_roster"]``.
     """
     seasons = sorted(stat_years, reverse=True)  # most recent first
     points_col = _points_column(scoring)
@@ -349,6 +387,21 @@ def build_dataset(
     adp_by_key = {r["key"]: r for _, r in adp.iterrows()} if not adp.empty else {}
     status_by_key = {r["key"]: r for _, r in status.iterrows()} if not status.empty else {}
 
+    # Only players currently on an NFL roster belong on the board: retired,
+    # released and unsigned players are dropped before anything is ranked, so
+    # they don't distort the projection curve or replacement levels either.
+    # Team defenses aren't in Sleeper's player catalog under our names; keep them.
+    dropped_off_roster: list[str] = []
+    if status_by_key:
+        def on_roster(key: str) -> bool:
+            if key.endswith("|DEF"):
+                return True
+            st = status_by_key.get(key)
+            return st is not None and bool(st["nfl_team"]) and bool(st["active"])
+
+        dropped_off_roster = sorted(k for k in keys if not on_roster(k))
+        keys -= set(dropped_off_roster)
+
     # Positional ADP rank, for the no-stats fallback and the blend below.
     adp_pos_rank: dict[str, int] = {}
     if not adp.empty:
@@ -372,14 +425,25 @@ def build_dataset(
                 games_by_season[s] = int(r.get("games", 0) or 0)
                 ppg_by_season[s] = pts_by_season[s] / games_by_season[s] if games_by_season[s] else 0.0
 
+        # Current team: Sleeper's roster first (catches offseason moves), then
+        # last season's stat line, then the ADP feed.
         team = None
-        if g is not None and pd.notna(g["team"].iloc[-1]):
+        st = status_by_key.get(key)
+        if st is not None and st["nfl_team"]:
+            team = st["nfl_team"]
+        elif g is not None and pd.notna(g["team"].iloc[-1]):
             team = str(g["team"].iloc[-1])
         elif a is not None:
             team = a["adp_team"]
 
-        avg_ppg = _weighted_ppg(ppg_by_season, seasons)
+        avg_ppg = _weighted_ppg(ppg_by_season, seasons, games_by_season)
         stats_proj = round(avg_ppg * 17, 1) if avg_ppg > 0 else None
+        # Sat out all of last season (injury, suspension, opt-out) but has
+        # older history: his per-game average only reflects the healthy years,
+        # so dock it for the layoff.
+        missed_last_season = games_by_season.get(seasons[0], 0) == 0
+        if stats_proj is not None and missed_last_season:
+            stats_proj = round(stats_proj * MISSED_SEASON_FACTOR, 1)
 
         prelim.append(
             {
@@ -456,4 +520,5 @@ def build_dataset(
     df = df.sort_values("projected_points", ascending=False).reset_index(drop=True)
     df.attrs["adp_source"] = adp_source
     df.attrs["live_adp_players"] = live_adp_players
+    df.attrs["dropped_off_roster"] = dropped_off_roster
     return df
