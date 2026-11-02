@@ -129,7 +129,19 @@ button { font: inherit; cursor: pointer; }
 }
 .rec-list li:hover { background: var(--bg-3); border-color: var(--line); }
 .rec-list li::before { counter-increment: r; content: counter(r); color: var(--muted); font-weight: 700; }
-.rec-name { font-weight: 700; }
+.rec-name { font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.rec-reject {
+  flex: none; width: 18px; height: 18px; padding: 0; line-height: 16px;
+  border: 1px solid var(--line); border-radius: 4px;
+  background: transparent; color: var(--muted); font-size: 10px;
+}
+.rec-reject:hover, .rec-reject:focus-visible { border-color: var(--danger); color: var(--danger); }
+.rec-reset {
+  display: block; margin: -4px 0 6px auto; padding: 0;
+  background: none; border: 0; color: var(--muted); font-size: 11px; text-decoration: underline;
+}
+.rec-reset:hover { color: var(--accent); }
+.rec-reset[hidden] { display: none; }
 .rec-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
 .rec-reasons { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
 .tag { background: var(--bg-3); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 10px; color: var(--muted); }

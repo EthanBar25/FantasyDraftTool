@@ -179,7 +179,15 @@ def recommend(
     state: DraftState,
     pool: list[RankedPlayer],
     limit: int = 8,
+    exclude: set[str] | frozenset[str] = frozenset(),
 ) -> list[Recommendation]:
+    """Rank available players for the current pick.
+
+    ``exclude`` holds lowercase player names to leave out of the result (the
+    ones you rejected for this pick). They're skipped *before* ``limit`` is
+    applied, so the next-best players backfill the list. They still count
+    toward tier cliffs and the positional pool, since they remain draftable.
+    """
     league = state.league
     avail = sorted(available_players(state, pool), key=lambda p: p.vor, reverse=True)
     my_counts: dict[str, int] = {}
@@ -198,6 +206,8 @@ def recommend(
 
     scored: list[Recommendation] = []
     for p in avail:
+        if p.player.lower() in exclude:
+            continue
         need_mult, need_reason = _roster_need(p.position, my_counts, league, late_draft)
         run_mult, run_reason = _positional_run(p.position, state)
         if p.position in STREAM_POSITIONS:

@@ -41,6 +41,10 @@ class PickBody(BaseModel):
     player_id: str | None = None
 
 
+class RejectBody(BaseModel):
+    player: str
+
+
 class SleeperBody(BaseModel):
     league_id: str | None = None
     draft_id: str | None = None
@@ -99,6 +103,22 @@ def delete_pick(pick_no: int) -> dict:
         session.clear_pick(pick_no)
     except IndexError as exc:
         raise HTTPException(status_code=404, detail="no such pick") from exc
+    return session.to_dict()
+
+
+@app.post("/api/recommendations/reject")
+def post_reject_recommendation(body: RejectBody) -> dict:
+    """Hide a player from recommendations for the current pick only."""
+    try:
+        session.reject_recommendation(body.player)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return session.to_dict()
+
+
+@app.delete("/api/recommendations/rejections")
+def delete_rejections() -> dict:
+    session.clear_rejections()
     return session.to_dict()
 
 

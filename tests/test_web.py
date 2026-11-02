@@ -113,3 +113,64 @@ def test_sync_sleeper_pulls_new_picks_without_rebuild(client, monkeypatch):
 
 def test_sync_sleeper_without_link_is_400(client):
     assert client.post("/api/sync/sleeper").status_code == 400
+
+
+def _rec_names(body):
+    return [r["player"] for r in body["recommendations"]]
+
+
+def test_reject_recommendation_backfills_list(client):
+    before = client.get("/api/state").json()
+    names = _rec_names(before)
+    top = names[0]
+
+    after = client.post("/api/recommendations/reject", json={"player": top}).json()
+    after_names = _rec_names(after)
+    assert top not in after_names
+    assert len(after_names) == len(names)  # next-best player backfilled
+    assert after_names[: len(names) - 1] == names[1:]
+    assert after["rejected"] == [top.lower()]
+
+
+def test_rejected_player_stays_draftable(client):
+    top = _rec_names(client.get("/api/state").json())[0]
+    body = client.post("/api/recommendations/reject", json={"player": top}).json()
+    assert top in [p["player"] for p in body["best_available"]]
+    assert top in [p["player"] for p in client.get(f"/api/players?q={top}").json()]
+
+    made = client.post("/api/picks/1", json={"player": top}).json()
+    assert made["draft"]["picks"][0]["player"] == top
+
+
+def test_rejections_reset_when_pick_changes(client):
+    names = _rec_names(client.get("/api/state").json())
+    client.post("/api/recommendations/reject", json={"player": names[0]})
+
+    # Someone else's pick advances the board: the rejection no longer applies.
+    advanced = client.post("/api/picks/1", json={"player": names[3]}).json()
+    assert advanced["rejected"] == []
+    assert names[0] in _rec_names(advanced)
+
+    # Undoing back to pick 1 doesn't bring the old rejection back.
+    undone = client.delete("/api/picks/1").json()
+    assert undone["rejected"] == []
+    assert names[0] in _rec_names(undone)
+
+
+def test_rejections_survive_reload_within_same_pick(client, tmp_path):
+    top = _rec_names(client.get("/api/state").json())[0]
+    client.post("/api/recommendations/reject", json={"player": top})
+
+    reloaded = DraftSession(projections_path=SAMPLE_PLAYERS, session_file=tmp_path / "session.json")
+    assert reloaded.load()
+    state = reloaded.to_dict()
+    assert state["rejected"] == [top.lower()]
+    assert top not in _rec_names(state)
+
+
+def test_clear_rejections_restores_list(client):
+    names = _rec_names(client.get("/api/state").json())
+    client.post("/api/recommendations/reject", json={"player": names[0]})
+    cleared = client.delete("/api/recommendations/rejections").json()
+    assert cleared["rejected"] == []
+    assert _rec_names(cleared) == names

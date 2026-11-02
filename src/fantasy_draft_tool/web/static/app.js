@@ -126,12 +126,19 @@ function renderRecs() {
   const upcoming = (s.draft.my_upcoming_picks || []).map((no) => pickLabel(s.draft.picks[no - 1]));
   hint.textContent = upcoming.length ? `your picks: ${upcoming.join(", ")}` : "";
 
+  const rejected = s.rejected || [];
+  const reset = document.getElementById("recReset");
+  reset.hidden = rejected.length === 0;
+  reset.textContent = `${rejected.length} rejected · reset`;
+
   list.innerHTML = s.recommendations
     .map(
       (r) => `
       <li data-player="${escapeAttr(r.player)}" data-position="${r.position}" data-team="${escapeAttr(r.team || "")}">
         <div>
-          <div class="rec-name">${escapeHtml(r.player)}</div>
+          <div class="rec-name">${escapeHtml(r.player)}<button type="button" class="rec-reject"
+            title="Not this pick — skip ${escapeAttr(r.player)} and recommend the next-best player"
+            aria-label="Reject ${escapeAttr(r.player)} for this pick">✕</button></div>
           <div class="rec-sub">${chip(r.position)} ${escapeHtml(r.team || "")} · ${r.projected_points} proj${r.adp != null ? ` · ADP ${r.adp}` : ""}</div>
           <div class="rec-reasons">${r.reasons
             .map((x, i) => `<span class="tag${i === 0 && r.injury_status ? " tag-warn" : ""}">${escapeHtml(x)}</span>`)
@@ -347,12 +354,35 @@ document.getElementById("pickSearch").addEventListener("input", (e) => {
   searchTimer = setTimeout(() => runSearch(q), 120);
 });
 
-document.getElementById("recList").addEventListener("click", (e) => {
+document.getElementById("recList").addEventListener("click", async (e) => {
   const li = e.target.closest("li");
   if (!li) return;
+  if (e.target.closest(".rec-reject")) {
+    // Reject for this pick only: the server drops him and backfills the list.
+    e.stopPropagation();
+    try {
+      STATE = await api("/api/recommendations/reject", {
+        method: "POST",
+        body: JSON.stringify({ player: li.dataset.player }),
+      });
+      render();
+    } catch (err) {
+      alert(err.message);
+    }
+    return;
+  }
   const cur = STATE.draft.current_pick_no;
   if (!cur) return;
   assignPick(cur, { player: li.dataset.player, position: li.dataset.position, team: li.dataset.team });
+});
+
+document.getElementById("recReset").addEventListener("click", async () => {
+  try {
+    STATE = await api("/api/recommendations/rejections", { method: "DELETE" });
+    render();
+  } catch (err) {
+    alert(err.message);
+  }
 });
 
 document.addEventListener("click", (e) => {
