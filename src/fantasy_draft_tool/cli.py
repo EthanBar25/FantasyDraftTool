@@ -27,18 +27,29 @@ def _cmd_rank(args: argparse.Namespace) -> int:
 
 
 def _cmd_fetch_data(args: argparse.Namespace) -> int:
-    from .datasets import build_dataset
+    from .datasets import MIN_ADP_PLAYERS, build_dataset, load_adp_snapshot
 
     print(f"Fetching ADP ({args.scoring}, {args.teams}-team, {args.adp_year}), "
           f"stats for {', '.join(map(str, args.years))}, and "
           f"{'injury/status news' if not args.no_status else '(skipping injury/status news)'} ...")
+    snapshot_path = args.adp_fallback or args.output
     df = build_dataset(
         stat_years=args.years,
         adp_year=args.adp_year,
         scoring=args.scoring,
         teams=args.teams,
         include_status=not args.no_status,
+        adp_fallback=load_adp_snapshot(snapshot_path),
     )
+    live = df.attrs.get("live_adp_players", 0)
+    if df.attrs.get("adp_source") == "fallback":
+        print(f"Live ADP feed returned only {live} players (< {MIN_ADP_PLAYERS}); "
+              f"reusing last-known ADP from {snapshot_path}.")
+    elif live < MIN_ADP_PLAYERS:
+        print(f"Live ADP feed returned only {live} players (< {MIN_ADP_PLAYERS}) and no "
+              f"better snapshot was found at {snapshot_path}. Not writing {args.output}.\n"
+              "Pass --adp-fallback <pool.csv> pointing at a pool with good ADP.")
+        return 1
     args.output.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.output, index=False)
     with_adp = int((df["adp"] != "").sum()) if "adp" in df.columns else 0
@@ -87,6 +98,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip pulling injury/suspension status from Sleeper.",
     )
     fetch.add_argument("-o", "--output", type=Path, default=PLAYER_POOL, help="Output CSV path.")
+    fetch.add_argument(
+        "--adp-fallback", type=Path, default=None,
+        help="Previously built pool CSV whose ADP is reused when the live ADP feed is "
+             "too thin (out of season). Default: the existing --output file.",
+    )
     fetch.set_defaults(func=_cmd_fetch_data)
 
     serve = sub.add_parser("serve", help="Run the local draft-board web app.")
