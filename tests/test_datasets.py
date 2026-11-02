@@ -24,12 +24,12 @@ ADP_PAYLOAD = {
 
 STATUS_PAYLOAD = {
     "1": {
-        "full_name": "James Cook", "position": "RB", "fantasy_positions": ["RB"],
+        "full_name": "James Cook", "position": "RB", "fantasy_positions": ["RB"], "team": "BUF",
         "status": "Active", "injury_status": "Questionable",
         "injury_notes": "knee", "injury_body_part": "Knee",
     },
     "2": {
-        "full_name": "Ja'Marr Chase", "position": "WR", "fantasy_positions": ["WR"],
+        "full_name": "Ja'Marr Chase", "position": "WR", "fantasy_positions": ["WR"], "team": "CIN",
         "status": "Active", "injury_status": "", "injury_notes": "",
     },
 }
@@ -157,7 +157,7 @@ def test_build_dataset_blends_projection_toward_this_years_adp():
         stat_years=stat_years, adp_year=2026,
         get_json=lambda url: adp_payload,
         read_csv=lambda url: stats[int(url.split("_")[-1].split(".")[0])].copy(),
-        get_status_json=fake_get_status_json,
+        include_status=False,
     )
     by_name = df.set_index("player")
     cook_stats_only = round((90.0 + 60.0) / 2 / 16 * 17, 1)  # half-ppr, unblended
@@ -261,3 +261,72 @@ def test_weighted_ppg_full_weight_at_eight_games():
     full = {2025: 17, 2024: 17, 2023: 17}
     seasons = [2025, 2024, 2023]
     assert _weighted_ppg(ppg, seasons, eight) == pytest.approx(_weighted_ppg(ppg, seasons, full))
+
+
+ROSTER_STATUS = {
+    "1": {"full_name": "James Cook", "position": "RB", "team": "BUF", "active": True,
+          "status": "Active"},
+    # Retired: Sleeper still says Active, but he's on no team.
+    "2": {"full_name": "Ja'Marr Chase", "position": "WR", "team": None, "active": True,
+          "status": "Active"},
+}
+
+
+def test_build_dataset_keeps_only_rostered_players():
+    df = build_dataset(
+        stat_years=[2023, 2024, 2025], adp_year=2026,
+        get_json=fake_get_json, read_csv=fake_read_csv,
+        get_status_json=lambda url: ROSTER_STATUS,
+    )
+    players = set(df["player"])
+    assert "Ja'Marr Chase" not in players  # no NFL team -> off the board
+    assert "James Cook" in players
+    assert "Chicago Defense" in players  # team defenses always kept
+    assert "ja'marr chase|WR".replace("'", "") in df.attrs["dropped_off_roster"]
+
+
+def test_build_dataset_uses_sleeper_team_for_current_team():
+    status = {"1": {**ROSTER_STATUS["1"], "team": "KC"}}
+    df = build_dataset(
+        stat_years=[2023, 2024, 2025], adp_year=2026,
+        get_json=fake_get_json, read_csv=fake_read_csv,
+        get_status_json=lambda url: status,
+    )
+    assert df.set_index("player").loc["James Cook", "team"] == "KC"
+
+
+def test_fetch_player_status_prefers_rostered_duplicate():
+    payload = {
+        "1": {"full_name": "Mike Williams", "position": "WR", "team": None,
+              "active": False, "status": "Inactive"},
+        "2": {"full_name": "Mike Williams", "position": "WR", "team": "PIT",
+              "active": True, "status": "Active"},
+    }
+    df = fetch_player_status(get_json=lambda url: payload)
+    assert list(df["nfl_team"]) == ["PIT"]
+
+
+def test_build_dataset_docks_player_who_missed_last_season():
+    stat_years = [2023, 2024, 2025]
+    stats = {
+        2023: _stats_frame(2023, [
+            {"player_display_name": "Hurt Guy", "position": "RB", "recent_team": "BUF",
+             "games": 17, "fantasy_points": 170.0, "fantasy_points_ppr": 170.0},
+        ]),
+        2024: _stats_frame(2024, [
+            {"player_display_name": "Hurt Guy", "position": "RB", "recent_team": "BUF",
+             "games": 17, "fantasy_points": 170.0, "fantasy_points_ppr": 170.0},
+        ]),
+        2025: _stats_frame(2025, [
+            {"player_display_name": "Other Guy", "position": "WR", "recent_team": "BUF",
+             "games": 17, "fantasy_points": 100.0, "fantasy_points_ppr": 100.0},
+        ]),
+    }
+    df = build_dataset(
+        stat_years=stat_years, adp_year=2026,
+        get_json=lambda url: {"players": []},
+        read_csv=lambda url: stats[int(url.split("_")[-1].split(".")[0])].copy(),
+        include_status=False,
+    )
+    # 10 ppg history -> 170 pts, docked 20% for sitting out all of 2025.
+    assert df.set_index("player").loc["Hurt Guy", "projected_points"] == 136.0

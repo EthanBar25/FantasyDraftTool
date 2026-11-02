@@ -50,6 +50,10 @@ def _cmd_fetch_data(args: argparse.Namespace) -> int:
               f"better snapshot was found at {snapshot_path}. Not writing {args.output}.\n"
               "Pass --adp-fallback <pool.csv> pointing at a pool with good ADP.")
         return 1
+    dropped = df.attrs.get("dropped_off_roster", [])
+    if dropped:
+        print(f"Dropped {len(dropped)} players not on a current NFL roster "
+              "(retired/released/unsigned per Sleeper).")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(args.output, index=False)
     with_adp = int((df["adp"] != "").sum()) if "adp" in df.columns else 0
