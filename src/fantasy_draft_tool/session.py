@@ -37,6 +37,10 @@ class DraftSession:
         self.state = DraftState(self.league, my_slot=1)
         self.slot_labels: dict[int, str] = {}
         self.sleeper: dict = {}  # {draft_id, league_id, is_mock, status} when linked
+        # Recommendations you rejected, valid only for the pick they were made
+        # on: {"pick_no": int, "players": [lowercase names]}. Cleared whenever
+        # the board changes (a pick made, undone, synced, reset, ...).
+        self.rejected: dict = {}
         self._pool: list[RankedPlayer] = []
         self._rerank()
 
@@ -82,9 +86,36 @@ class DraftSession:
                 break
         return rows
 
+    # -- rejected recommendations ----------------------------------
+
+    def rejected_names(self) -> set[str]:
+        """Names rejected for the pick currently on the clock (lowercase)."""
+        cur = self.state.current_pick_no
+        if not cur or self.rejected.get("pick_no") != cur:
+            return set()
+        return set(self.rejected.get("players", []))
+
+    def reject_recommendation(self, player: str) -> None:
+        """Hide ``player`` from recommendations for the current pick only.
+
+        The player stays draftable and still shows in best-available/search.
+        """
+        cur = self.state.current_pick_no
+        if not cur:
+            raise ValueError("the draft is complete; there's no pick to reject for")
+        names = self.rejected_names()
+        names.add(player.strip().lower())
+        self.rejected = {"pick_no": cur, "players": sorted(names)}
+        self.save()
+
+    def clear_rejections(self) -> None:
+        self.rejected = {}
+        self.save()
+
     # -- mutations --------------------------------------------------
 
     def set_league(self, league: LeagueSettings, my_slot: int | None = None) -> None:
+        self.rejected = {}
         self.league = league
         self.state.reconfigure(league, my_slot=my_slot)
         self._rerank()
@@ -102,14 +133,17 @@ class DraftSession:
                 position, team = found.position, team or found.team
         self.state.set_pick(pick_no, player=player, position=normalize_position(position or "NA"),
                             team=team, player_id=player_id)
+        self.rejected = {}
         self.save()
 
     def clear_pick(self, pick_no: int) -> None:
         self.state.clear_pick(pick_no)
+        self.rejected = {}
         self.save()
 
     def reset(self) -> None:
         self.state.reset()
+        self.rejected = {}
         self.save()
 
     def import_sleeper(self, league_id: str | None, draft_id: str | None,
@@ -126,6 +160,7 @@ class DraftSession:
             "is_mock": imported.is_mock,
             "status": imported.status,
         }
+        self.rejected = {}
         self._rerank()
         self.save()
 
@@ -137,13 +172,14 @@ class DraftSession:
         client = client or SleeperClient()
         changed = apply_new_picks(self.state, client.sync_picks(draft_id))
         if changed:
+            self.rejected = {}
             self.save()
         return changed
 
     # -- views ----------------------------------------------------
 
     def recommendations(self, limit: int = 8) -> list[Recommendation]:
-        return recommend(self.state, self._pool, limit=limit)
+        return recommend(self.state, self._pool, limit=limit, exclude=self.rejected_names())
 
     def best_available(self, limit: int = 12):
         avail = sorted(available_players(self.state, self._pool), key=lambda p: p.vor, reverse=True)
@@ -173,6 +209,7 @@ class DraftSession:
                 "sleeper": self.sleeper,
             },
             "recommendations": [r.to_dict() for r in self.recommendations()],
+            "rejected": sorted(self.rejected_names()),
             "best_available": self.best_available(),
         }
 
@@ -184,6 +221,7 @@ class DraftSession:
             "my_slot": self.state.my_slot,
             "slot_labels": {str(k): v for k, v in self.slot_labels.items()},
             "sleeper": self.sleeper,
+            "rejected": self.rejected,
             "league": self.league.to_dict(),
             "picks": [p.to_dict() for p in self.state.picks if p.is_made],
         }
@@ -215,4 +253,7 @@ class DraftSession:
                 )
             except (ValueError, KeyError, IndexError):
                 continue
+        # Restored after the picks so the current pick is known; stale entries
+        # (for a different pick) are simply ignored by rejected_names().
+        self.rejected = data.get("rejected") or {}
         return True
