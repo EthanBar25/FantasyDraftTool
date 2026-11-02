@@ -44,7 +44,7 @@ may still want to handcuff or stash someone.
 | column | meaning |
 |---|---|
 | `points_YYYY`, `games_YYYY` | that season's fantasy points (chosen scoring) and games |
-| `avg_ppg_3yr` | per-game average, weighted 3× / 2× / 1× from newest to oldest season |
+| `avg_ppg_3yr` | per-game average, weighted 70% / 20% / 10% from newest to oldest season; a season with fewer than 8 games has its weight scaled by games / 8 (0 games → no weight), then weights renormalize |
 | `projected_points` | see below — a transparent proxy, **not** a projection service |
 | `ppg_trend` | newest-season PPG minus oldest-season PPG |
 

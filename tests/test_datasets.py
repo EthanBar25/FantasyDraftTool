@@ -1,6 +1,8 @@
 import pandas as pd
+import pytest
 
 from fantasy_draft_tool.datasets import (
+    _weighted_ppg,
     build_dataset,
     fetch_adp,
     fetch_player_status,
@@ -106,9 +108,9 @@ def test_build_dataset_merges_stats_with_adp():
     cook = by_name.loc["James Cook"]
     assert cook["adp"] == 9.5  # matched across the "III" suffix
     assert cook["points_2025"] == (200.0 + 260.0) / 2
-    # Recency-weighted ppg: 2025 counts 3x, 2024 2x, 2023 1x.
+    # Recency-weighted ppg: 70% 2025, 20% 2024, 10% 2023 (all full seasons).
     ppg = {2025: 230.0 / 17, 2024: 200.0 / 17, 2023: 190.0 / 16}
-    expected = (3 * ppg[2025] + 2 * ppg[2024] + 1 * ppg[2023]) / 6
+    expected = 0.7 * ppg[2025] + 0.2 * ppg[2024] + 0.1 * ppg[2023]
     assert cook["avg_ppg_3yr"] == round(expected, 2)
     # Only RB with stats+ADP -> the ADP-implied curve is just his own value,
     # so the 50/50 blend is a no-op here.
@@ -230,3 +232,32 @@ def test_build_dataset_prefers_live_adp_when_healthy(tmp_path):
     )
     assert df.attrs["adp_source"] == "live"
     assert df.set_index("player").loc["James Cook", "adp"] == 9.5
+
+
+def test_weighted_ppg_uses_70_20_10_for_full_seasons():
+    ppg = {2025: 20.0, 2024: 10.0, 2023: 5.0}
+    games = {2025: 17, 2024: 17, 2023: 17}
+    assert _weighted_ppg(ppg, [2025, 2024, 2023], games) == pytest.approx(16.5)
+
+
+def test_weighted_ppg_scales_down_short_seasons():
+    # 2025 was a 4-game sample: weight 0.7 * 4/8 = 0.35, then renormalized.
+    ppg = {2025: 30.0, 2024: 10.0, 2023: 10.0}
+    games = {2025: 4, 2024: 17, 2023: 17}
+    expected = (0.35 * 30.0 + 0.2 * 10.0 + 0.1 * 10.0) / (0.35 + 0.2 + 0.1)
+    assert _weighted_ppg(ppg, [2025, 2024, 2023], games) == pytest.approx(expected)
+
+
+def test_weighted_ppg_ignores_zero_game_seasons():
+    ppg = {2025: 0.0, 2024: 12.0, 2023: 6.0}
+    games = {2025: 0, 2024: 16, 2023: 16}
+    expected = (0.2 * 12.0 + 0.1 * 6.0) / 0.3
+    assert _weighted_ppg(ppg, [2025, 2024, 2023], games) == pytest.approx(expected)
+
+
+def test_weighted_ppg_full_weight_at_eight_games():
+    ppg = {2025: 20.0, 2024: 10.0, 2023: 5.0}
+    eight = {2025: 8, 2024: 8, 2023: 8}
+    full = {2025: 17, 2024: 17, 2023: 17}
+    seasons = [2025, 2024, 2023]
+    assert _weighted_ppg(ppg, seasons, eight) == pytest.approx(_weighted_ppg(ppg, seasons, full))

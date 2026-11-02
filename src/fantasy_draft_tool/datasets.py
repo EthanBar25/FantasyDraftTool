@@ -57,8 +57,15 @@ SCORING_ALIASES = {
 
 SKILL_POSITIONS = {"QB", "RB", "WR", "TE", "K", "DEF"}
 
-# Recency weights for the per-game average: most recent season counts most.
-SEASON_WEIGHTS = [3.0, 2.0, 1.0]
+# Recency weights for the per-game average, newest season first: last season
+# carries most of the signal (role changes, breakouts, decline), the one before
+# smooths single-season noise (TD variance), and the oldest is a light tiebreaker.
+SEASON_WEIGHTS = [0.7, 0.2, 0.1]
+
+# A season with fewer games than this has its weight scaled by games / this,
+# so a 3-game sample can't dominate a player's per-game average. A 0-game
+# season contributes nothing.
+FULL_WEIGHT_GAMES = 8
 
 # Positions with no usable history in the offensive stat feed — always priced
 # off ADP rank, never off past fantasy points.
@@ -296,10 +303,22 @@ def _points_column(scoring: str) -> str:
     }.get(SCORING_ALIASES.get(scoring.lower(), scoring.lower()), "points_half")
 
 
-def _weighted_ppg(ppg_by_season: dict[int, float], seasons: list[int]) -> float:
+def _weighted_ppg(
+    ppg_by_season: dict[int, float],
+    seasons: list[int],
+    games_by_season: dict[int, int] | None = None,
+) -> float:
+    """Recency-weighted per-game average over ``seasons`` (newest first).
+
+    Seasons with fewer than ``FULL_WEIGHT_GAMES`` games are down-weighted in
+    proportion to games played; weights renormalize over what's left.
+    """
     num = den = 0.0
     for weight, season in zip(SEASON_WEIGHTS, seasons):
         if season in ppg_by_season:
+            if games_by_season is not None:
+                games = games_by_season.get(season, 0)
+                weight *= min(games, FULL_WEIGHT_GAMES) / FULL_WEIGHT_GAMES
             num += weight * ppg_by_season[season]
             den += weight
     return num / den if den else 0.0
@@ -378,7 +397,7 @@ def build_dataset(
         elif a is not None:
             team = a["adp_team"]
 
-        avg_ppg = _weighted_ppg(ppg_by_season, seasons)
+        avg_ppg = _weighted_ppg(ppg_by_season, seasons, games_by_season)
         stats_proj = round(avg_ppg * 17, 1) if avg_ppg > 0 else None
 
         prelim.append(
