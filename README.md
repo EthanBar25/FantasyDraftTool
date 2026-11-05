@@ -3,6 +3,10 @@
 A personal tool to help with fantasy NFL drafts — turn player projections into
 draft rankings and make faster, better picks on draft day.
 
+![Draft board mid-draft: rounds × teams grid with your pick on the clock and the ranked recommendation panel on the right](docs/draft-board.png)
+
+*Round 4 of a 12-team draft: your pick is on the clock (highlighted), and the panel ranks the best options by value over replacement, with the reason for each one.*
+
 ## Status
 
 Working today:
